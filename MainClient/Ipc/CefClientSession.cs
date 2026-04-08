@@ -40,6 +40,7 @@ namespace MainClient.Ipc
 
         public event Func<string, Task>? OnLog;
         public event Func<PipeEnvelope, Task>? OnBrowserResult;
+        public event Func<PipeEnvelope, Task>? OnBrowserStatus;
 
         public CefClientSession(
             string exePath,
@@ -297,6 +298,20 @@ namespace MainClient.Ipc
                             try
                             {
                                 await OnBrowserResult.Invoke(msg);
+                            }
+                            catch
+                            {
+                            }
+                        }
+                    }
+
+                    if (string.Equals(msg.Type, "browserStatus", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (OnBrowserStatus != null)
+                        {
+                            try
+                            {
+                                await OnBrowserStatus.Invoke(msg);
                             }
                             catch
                             {

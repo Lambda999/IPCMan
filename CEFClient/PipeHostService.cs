@@ -46,6 +46,8 @@ public sealed class PipeHostService : IAsyncDisposable
         {
             Type = "ready"
         }, cancellationToken);
+
+        await SendLogAsync($"Pipe connected. pipe={_pipeName}", cancellationToken);
     }
 
     public async Task RunLoopAsync(CancellationToken cancellationToken = default)
@@ -110,6 +112,7 @@ public sealed class PipeHostService : IAsyncDisposable
     private async Task HandleCreateBrowserAsync(PipeEnvelope req, CancellationToken token)
     {
         var ok = await _mainForm.CreateBrowserAsync(req.BrowserId!, token);
+        await SendLogAsync($"CreateBrowserAsync done. browserId={req.BrowserId}, success={ok}", token);
 
         await SendAsync(new PipeEnvelope
         {
@@ -119,12 +122,20 @@ public sealed class PipeHostService : IAsyncDisposable
             Success = ok,
             Message = ok ? "created" : "create failed"
         }, token);
+
+        await SendBrowserStatusAsync(
+            req.BrowserId,
+            stage: "created",
+            success: ok,
+            message: ok ? "browser created" : "browser create failed",
+            cancellationToken: token);
     }
 
     private async Task HandleRunBrowserAsync(PipeEnvelope req, CancellationToken token)
     {
         var browserId = req.BrowserId!;
         var payload = req.Payload ?? _taskPayload;
+        await SendLogAsync($"RunBrowserAsync start. browserId={browserId}", token);
 
         var runTask = Task.Run(async () =>
         {
@@ -132,6 +143,7 @@ public sealed class PipeHostService : IAsyncDisposable
             try
             {
                 result = await _mainForm.RunBrowserAsync(browserId, payload, token);
+                await SendLogAsync($"RunBrowserAsync finished. browserId={browserId}, success={result.Success}, msg={result.Message}", CancellationToken.None);
             }
             catch (Exception ex)
             {
@@ -141,6 +153,18 @@ public sealed class PipeHostService : IAsyncDisposable
                     Success = false,
                     Message = ex.Message
                 };
+                await SendLogAsync($"RunBrowserAsync exception. browserId={browserId}, msg={ex.Message}", CancellationToken.None);
+            }
+
+            if (result.Success)
+            {
+                await SendBrowserStatusAsync(
+                    browserId,
+                    stage: "opened",
+                    success: true,
+                    message: "page opened",
+                    cancellationToken: CancellationToken.None,
+                    data: result.Data);
             }
 
             try
@@ -149,6 +173,13 @@ public sealed class PipeHostService : IAsyncDisposable
                 var dataObj = result.Data as System.Text.Json.Nodes.JsonObject ?? new System.Text.Json.Nodes.JsonObject();
                 dataObj["removedByCefClient"] = true;
                 result.Data = dataObj;
+                await SendBrowserStatusAsync(
+                    browserId,
+                    stage: "removed",
+                    success: true,
+                    message: "browser removed by cefclient",
+                    cancellationToken: CancellationToken.None,
+                    data: result.Data);
             }
             catch (Exception ex)
             {
@@ -156,6 +187,13 @@ public sealed class PipeHostService : IAsyncDisposable
                 dataObj["removedByCefClient"] = false;
                 dataObj["removeError"] = ex.Message;
                 result.Data = dataObj;
+                await SendBrowserStatusAsync(
+                    browserId,
+                    stage: "removeFailed",
+                    success: false,
+                    message: ex.Message,
+                    cancellationToken: CancellationToken.None,
+                    data: result.Data);
             }
 
             await SendAsync(new PipeEnvelope
@@ -167,6 +205,7 @@ public sealed class PipeHostService : IAsyncDisposable
                 Message = result.Message,
                 Data = result.Data
             }, CancellationToken.None);
+            await SendLogAsync($"browserResult sent. browserId={browserId}, success={result.Success}", CancellationToken.None);
         }, CancellationToken.None);
 
         _runTasks.AddOrUpdate(browserId, runTask, (_, __) => runTask);
@@ -178,6 +217,7 @@ public sealed class PipeHostService : IAsyncDisposable
         try
         {
             await _mainForm.RemoveBrowserFastAsync(req.BrowserId!);
+            await SendLogAsync($"RemoveBrowserFastAsync done. browserId={req.BrowserId}", token);
 
             await SendAsync(new PipeEnvelope
             {
@@ -187,9 +227,17 @@ public sealed class PipeHostService : IAsyncDisposable
                 Success = true,
                 Message = "removed"
             }, token);
+
+            await SendBrowserStatusAsync(
+                req.BrowserId,
+                stage: "removed",
+                success: true,
+                message: "browser removed by main command",
+                cancellationToken: token);
         }
         catch (Exception ex)
         {
+            await SendLogAsync($"RemoveBrowserFastAsync failed. browserId={req.BrowserId}, msg={ex.Message}", token);
             await SendAsync(new PipeEnvelope
             {
                 Type = "browserRemoved",
@@ -198,7 +246,45 @@ public sealed class PipeHostService : IAsyncDisposable
                 Success = false,
                 Message = ex.Message
             }, token);
+
+            await SendBrowserStatusAsync(
+                req.BrowserId,
+                stage: "removeFailed",
+                success: false,
+                message: ex.Message,
+                cancellationToken: token);
         }
+    }
+
+    public Task SendLogAsync(string message, CancellationToken cancellationToken = default)
+    {
+        return SendAsync(new PipeEnvelope
+        {
+            Type = "log",
+            Message = message
+        }, cancellationToken);
+    }
+
+    private async Task SendBrowserStatusAsync(
+        string? browserId,
+        string stage,
+        bool success,
+        string message,
+        CancellationToken cancellationToken,
+        System.Text.Json.Nodes.JsonNode? data = null)
+    {
+        var statusData = data as System.Text.Json.Nodes.JsonObject ?? new System.Text.Json.Nodes.JsonObject();
+        statusData["stage"] = stage;
+
+        await SendAsync(new PipeEnvelope
+        {
+            Type = "browserStatus",
+            TaskId = _taskId,
+            BrowserId = browserId,
+            Success = success,
+            Message = message,
+            Data = statusData
+        }, cancellationToken);
     }
 
     private async Task SendAsync(PipeEnvelope envelope, CancellationToken cancellationToken = default)
