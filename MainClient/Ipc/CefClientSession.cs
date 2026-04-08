@@ -39,6 +39,7 @@ namespace MainClient.Ipc
         public string PipeName => _pipeName;
 
         public event Func<string, Task>? OnLog;
+        public event Func<PipeEnvelope, Task>? OnBrowserResult;
 
         public CefClientSession(
             string exePath,
@@ -162,6 +163,23 @@ namespace MainClient.Ipc
             };
         }
 
+        public async Task RunBrowserNoWaitAsync(
+            string taskId,
+            string browserId,
+            JsonNode? payload,
+            CancellationToken cancellationToken = default)
+        {
+            await SendAsync(
+                new PipeEnvelope
+                {
+                    Type = "runBrowser",
+                    TaskId = taskId,
+                    BrowserId = browserId,
+                    Payload = payload
+                },
+                cancellationToken);
+        }
+
         public async Task RemoveBrowserAsync(
             string taskId,
             string browserId,
@@ -270,6 +288,20 @@ namespace MainClient.Ipc
                         if (!string.IsNullOrWhiteSpace(msg.Message) && OnLog != null)
                             await OnLog.Invoke(msg.Message);
                         continue;
+                    }
+
+                    if (string.Equals(msg.Type, "browserResult", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (OnBrowserResult != null)
+                        {
+                            try
+                            {
+                                await OnBrowserResult.Invoke(msg);
+                            }
+                            catch
+                            {
+                            }
+                        }
                     }
 
                     var key = BuildResponseKey(msg);

@@ -1,4 +1,5 @@
 ﻿using System.IO.Pipes;
+using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
 
@@ -19,6 +20,7 @@ public sealed class PipeHostService : IAsyncDisposable
     private StreamReader? _reader;
     private StreamWriter? _writer;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
+    private readonly ConcurrentDictionary<string, Task> _runTasks = new();
 
     private string? _taskId;
     private System.Text.Json.Nodes.JsonNode? _taskPayload;
@@ -91,7 +93,7 @@ public sealed class PipeHostService : IAsyncDisposable
                     break;
 
                 case "runBrowser":
-                    await HandleRunBrowserAsync(req, token);
+                    _ = HandleRunBrowserAsync(req, token);
                     break;
 
                 case "removeBrowser":
@@ -121,18 +123,54 @@ public sealed class PipeHostService : IAsyncDisposable
 
     private async Task HandleRunBrowserAsync(PipeEnvelope req, CancellationToken token)
     {
+        var browserId = req.BrowserId!;
         var payload = req.Payload ?? _taskPayload;
-        var result = await _mainForm.RunBrowserAsync(req.BrowserId!, payload, token);
 
-        await SendAsync(new PipeEnvelope
+        var runTask = Task.Run(async () =>
         {
-            Type = "browserResult",
-            TaskId = _taskId,
-            BrowserId = req.BrowserId,
-            Success = result.Success,
-            Message = result.Message,
-            Data = result.Data
-        }, token);
+            BrowserRunResult result;
+            try
+            {
+                result = await _mainForm.RunBrowserAsync(browserId, payload, token);
+            }
+            catch (Exception ex)
+            {
+                result = new BrowserRunResult
+                {
+                    BrowserId = browserId,
+                    Success = false,
+                    Message = ex.Message
+                };
+            }
+
+            try
+            {
+                await _mainForm.RemoveBrowserFastAsync(browserId);
+                var dataObj = result.Data as System.Text.Json.Nodes.JsonObject ?? new System.Text.Json.Nodes.JsonObject();
+                dataObj["removedByCefClient"] = true;
+                result.Data = dataObj;
+            }
+            catch (Exception ex)
+            {
+                var dataObj = result.Data as System.Text.Json.Nodes.JsonObject ?? new System.Text.Json.Nodes.JsonObject();
+                dataObj["removedByCefClient"] = false;
+                dataObj["removeError"] = ex.Message;
+                result.Data = dataObj;
+            }
+
+            await SendAsync(new PipeEnvelope
+            {
+                Type = "browserResult",
+                TaskId = _taskId,
+                BrowserId = browserId,
+                Success = result.Success,
+                Message = result.Message,
+                Data = result.Data
+            }, CancellationToken.None);
+        }, CancellationToken.None);
+
+        _runTasks.AddOrUpdate(browserId, runTask, (_, __) => runTask);
+        _ = runTask.ContinueWith(_ => _runTasks.TryRemove(browserId, out _), CancellationToken.None);
     }
 
     private async Task HandleRemoveBrowserAsync(PipeEnvelope req, CancellationToken token)
