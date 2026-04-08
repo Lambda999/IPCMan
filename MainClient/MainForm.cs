@@ -159,6 +159,7 @@ namespace MainClient
             checkBox_IsProxyMode.Checked = _appSettings.IsProxyMode;
 
             numericUpDown_IpTtl.Value = _appSettings.IpTtl;
+            numericUpDown_UVInterval.Value = Math.Max(numericUpDown_UVInterval.Minimum, Math.Min(numericUpDown_UVInterval.Maximum, _appSettings.UVInterval <= 0 ? 1000 : _appSettings.UVInterval));
 
         }
         private static object lock_config = new object();
@@ -178,6 +179,7 @@ namespace MainClient
                 _appSettings.IsHiddenMode = checkBox_IsHiddenMode.Checked;
                 _appSettings.IsProxyMode = checkBox_IsProxyMode.Checked;
                 _appSettings.IpTtl = (int)numericUpDown_IpTtl.Value;
+                _appSettings.UVInterval = (int)numericUpDown_UVInterval.Value;
 
 
                 UserConfigService.Save("AppSettings", _appSettings);
@@ -530,6 +532,74 @@ namespace MainClient
                 _logger.LogInformation("CefClient[{TaskId}] {Message}", ctx.TaskId, message);
                 return Task.CompletedTask;
             };
+            session.OnBrowserStatus += status =>
+            {
+                var stage = status.Data?["stage"]?.GetValue<string>() ?? "unknown";
+                var browserId = status.BrowserId ?? string.Empty;
+                _logger.LogInformation(
+                    "CefClient browser status. taskId={TaskId}, browserId={BrowserId}, stage={Stage}, success={Success}, msg={Message}",
+                    ctx.TaskId,
+                    browserId,
+                    stage,
+                    status.Success,
+                    status.Message);
+                return Task.CompletedTask;
+            };
+
+            var completedUvTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            int dispatchedUvCount = 0;
+            int completedUvCount = 0;
+            bool stopRemainingUvByResult = false;
+
+            session.OnBrowserResult += async response =>
+            {
+                if (!string.Equals(response.TaskId, ctx.UniqueId, StringComparison.OrdinalIgnoreCase))
+                    return;
+
+                if (string.IsNullOrWhiteSpace(response.BrowserId))
+                    return;
+
+                var uvNumber = Interlocked.Increment(ref completedUvCount);
+                _logger.LogInformation(
+                    "RunBrowserAsync done. taskId={TaskId}, uv={Uv}, browserId={BrowserId}, success={Success}, msg={Message}",
+                    ctx.TaskId,
+                    uvNumber,
+                    response.BrowserId,
+                    response.Success,
+                    response.Message);
+
+                var result = new BrowserRunResponse
+                {
+                    Success = response.Success ?? false,
+                    Message = response.Message ?? string.Empty,
+                    Data = response.Data
+                };
+
+                if (ShouldStopRemainingUv(ctx, result))
+                {
+                    stopRemainingUvByResult = true;
+                }
+
+                var removedByCefClient = response.Data?["removedByCefClient"]?.GetValue<bool?>() ?? false;
+                if (!removedByCefClient)
+                {
+                    try
+                    {
+                        await session.RemoveBrowserAsync(ctx.UniqueId, response.BrowserId, CancellationToken.None);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex,
+                            "RemoveBrowserAsync failed after browserResult. taskId={TaskId}, browserId={BrowserId}",
+                            ctx.TaskId, response.BrowserId);
+                    }
+                }
+
+                if (Volatile.Read(ref completedUvCount) >= Volatile.Read(ref dispatchedUvCount))
+                {
+                    completedUvTcs.TrySetResult(true);
+                }
+            };
 
             try
             {
@@ -542,6 +612,7 @@ namespace MainClient
                 using var ipTtlCts = new CancellationTokenSource(TimeSpan.FromSeconds(ipTtlSeconds));
                 using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(token, ipTtlCts.Token);
                 var innerToken = linkedCts.Token;
+                var uvIntervalMs = Math.Max(1000, _appSettings.UVInterval <= 0 ? 1000 : _appSettings.UVInterval);
 
                 for (int uvIndex = 0; uvIndex < ctx.TotalUV; uvIndex++)
                 {
@@ -564,40 +635,17 @@ namespace MainClient
 
                         await session.CreateBrowserAsync(ctx.UniqueId, browserId, innerToken);
 
-                        try
-                        {
-                            var uvPayload = BuildRunBrowserPayload(ctx, rawTask, dev, consumerId, uvIndex);
+                        var uvPayload = BuildRunBrowserPayload(ctx, rawTask, dev, consumerId, uvIndex);
+                        await session.RunBrowserNoWaitAsync(
+                            ctx.UniqueId,
+                            browserId,
+                            uvPayload,
+                            innerToken);
 
-                            var result = await session.RunBrowserAsync(
-                                ctx.UniqueId,
-                                browserId,
-                                uvPayload,
-                                innerToken);
+                        Interlocked.Increment(ref dispatchedUvCount);
 
-                            _logger.LogInformation(
-                                "RunBrowserAsync done. taskId={TaskId}, uv={Uv}, success={Success}, msg={Message}",
-                                ctx.TaskId,
-                                uvIndex + 1,
-                                result.Success,
-                                result.Message);
-
-                            bool stopRemainingUv = ShouldStopRemainingUv(ctx, result);
-                            if (stopRemainingUv)
-                                return true;
-                        }
-                        finally
-                        {
-                            //try
-                            //{
-                            //    await session.RemoveBrowserAsync(ctx.UniqueId, browserId, CancellationToken.None);
-                            //}
-                            //catch (Exception ex)
-                            //{
-                            //    _logger.LogWarning(ex,
-                            //        "RemoveBrowserAsync failed. taskId={TaskId}, browserId={BrowserId}",
-                            //        ctx.TaskId, browserId);
-                            //}
-                        }
+                        if (uvIndex < ctx.TotalUV - 1)
+                            await Task.Delay(uvIntervalMs, innerToken);
                     }
                     catch (OperationCanceledException) when (token.IsCancellationRequested)
                     {
@@ -616,7 +664,16 @@ namespace MainClient
                     }
                 }
 
-                return false;
+                if (Volatile.Read(ref dispatchedUvCount) <= 0)
+                    return false;
+
+                if (Volatile.Read(ref completedUvCount) >= Volatile.Read(ref dispatchedUvCount))
+                    completedUvTcs.TrySetResult(true);
+
+                using var completeReg = innerToken.Register(() => completedUvTcs.TrySetCanceled(innerToken));
+                await completedUvTcs.Task;
+
+                return stopRemainingUvByResult;
             }
             finally
             {
@@ -662,7 +719,7 @@ namespace MainClient
                 ["os"] = (int)(ctx.OS),
                 ["device"] = JsonNode.Parse(System.Text.Json.JsonSerializer.Serialize(dev)),
                 ["rawTask"] = rawTask.ToString(Newtonsoft.Json.Formatting.None),
-                ["url"] = "https://www.baidu.com",
+                ["url"] = ctx.Url,
             };
         }
 
