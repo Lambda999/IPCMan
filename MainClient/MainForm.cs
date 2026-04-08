@@ -601,6 +601,61 @@ namespace MainClient
                 }
             };
 
+            var completedUvTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            int dispatchedUvCount = 0;
+            int completedUvCount = 0;
+            bool stopRemainingUvByResult = false;
+
+            session.OnBrowserResult += async response =>
+            {
+                if (!string.Equals(response.TaskId, ctx.UniqueId, StringComparison.OrdinalIgnoreCase))
+                    return;
+
+                if (string.IsNullOrWhiteSpace(response.BrowserId))
+                    return;
+
+                var uvNumber = Interlocked.Increment(ref completedUvCount);
+                _logger.LogInformation(
+                    "RunBrowserAsync done. taskId={TaskId}, uv={Uv}, browserId={BrowserId}, success={Success}, msg={Message}",
+                    ctx.TaskId,
+                    uvNumber,
+                    response.BrowserId,
+                    response.Success,
+                    response.Message);
+
+                var result = new BrowserRunResponse
+                {
+                    Success = response.Success ?? false,
+                    Message = response.Message ?? string.Empty,
+                    Data = response.Data
+                };
+
+                if (ShouldStopRemainingUv(ctx, result))
+                {
+                    stopRemainingUvByResult = true;
+                }
+
+                var removedByCefClient = response.Data?["removedByCefClient"]?.GetValue<bool?>() ?? false;
+                if (!removedByCefClient)
+                {
+                    try
+                    {
+                        await session.RemoveBrowserAsync(ctx.UniqueId, response.BrowserId, CancellationToken.None);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex,
+                            "RemoveBrowserAsync failed after browserResult. taskId={TaskId}, browserId={BrowserId}",
+                            ctx.TaskId, response.BrowserId);
+                    }
+                }
+
+                if (Volatile.Read(ref completedUvCount) >= Volatile.Read(ref dispatchedUvCount))
+                {
+                    completedUvTcs.TrySetResult(true);
+                }
+            };
+
             try
             {
                 await session.StartAsync(token);
