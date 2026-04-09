@@ -121,6 +121,7 @@ namespace MainClient.Ipc
         public async Task CreateBrowserAsync(
             string taskId,
             string browserId,
+            JsonNode? payload,
             CancellationToken cancellationToken = default)
         {
             var resp = await SendAndWaitAsync(
@@ -128,7 +129,8 @@ namespace MainClient.Ipc
                 {
                     Type = "createBrowser",
                     TaskId = taskId,
-                    BrowserId = browserId
+                    BrowserId = browserId,
+                    Payload = payload
                 },
                 expectedType: "browserCreated",
                 key: $"browserCreated:{browserId}",

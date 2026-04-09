@@ -21,6 +21,7 @@ namespace CefClient
     {
         private readonly FlowLayoutPanel _hostPanel;
         private readonly ConcurrentDictionary<string, BrowserSlot> _slots = new();
+        public Func<string, CancellationToken, Task>? LogAsync { get; set; }
         public MainForm()
         {
             InitializeComponent();
@@ -37,14 +38,20 @@ namespace CefClient
 
         private void MainForm_Load(object sender, EventArgs e)
         {
-
+            LogInfo("MainForm loaded.");
         }
 
 
         public async Task<bool> CreateBrowserAsync(string browserId, System.Text.Json.Nodes.JsonNode? payload, CancellationToken cancellationToken = default)
         {
             if (_slots.ContainsKey(browserId))
+            {
+                LogInfo($"CreateBrowserAsync skipped, browser already exists. browserId={browserId}");
                 return true;
+            }
+
+            LogInfo($"CreateBrowserAsync started. browserId={browserId},payload={payload?.ToString()}");
+ 
 
             var slot = await UiInvokeAsync(() =>
             {
@@ -73,15 +80,18 @@ namespace CefClient
                     BorderStyle = BorderStyle.None
                 };
 
-                var sw = payload?["dev"]?["sw"]?.GetValue<int>() ?? 1080;
-                var sh = payload?["dev"]?["sh"]?.GetValue<int>() ?? 1920;
+                //var sw = payload?["dev"]?["sw"]?.GetValue<int>() ?? 1080;
+                //var sh = payload?["dev"]?["sh"]?.GetValue<int>() ?? 1920;
 
-                var profileResult = AndroidViewportMatcher.Match(sw, sh);
-                var deviceScale = profileResult.DeviceScaleFactor;
-                int cssWidth = profileResult.CssWidth;
-                int cssHeight = profileResult.CssHeight;
-                panel.Width = cssWidth + 5;
-                panel.Height = cssHeight + 5;
+                //var profileResult = AndroidViewportMatcher.Match(sw, sh);
+                //var deviceScale = profileResult.DeviceScaleFactor;
+                //int cssWidth = profileResult.CssWidth;
+                //int cssHeight = profileResult.CssHeight;
+                //panel.Width = cssWidth + 5;
+                //panel.Height = cssHeight + 5;
+                int cssWidth = 420;
+                int cssHeight = 920;
+
 
                 var browser = new ChromiumWebBrowser("about:blank", requestContext)
                 {
@@ -90,7 +100,7 @@ namespace CefClient
                     Size = new Size(cssWidth, cssHeight)
                 };
                 var ua = payload?["dev"]?["ua"]?.ToString();
-                var os = payload?["os"]?.GetValue<int>() ?? 1;
+                //var os = payload?["os"]?.GetValue<int>() ?? 1;
                 this.Text = ua;
 
                 //var proxy_server = _args["proxy_server"].ToString();
@@ -113,32 +123,32 @@ namespace CefClient
                     //}
                     #endregion
 
-                    Task.Run(async () =>
-                    {
+                    //Task.Run(async () =>
+                    //{
 
-                        using (DevToolsClient DTC = browser.GetBrowser().GetDevToolsClient())
-                        {
-                            if (new int[] { 1, 2 }.Contains(os))
-                            {
+                    //    using (DevToolsClient DTC = browser.GetBrowser().GetDevToolsClient())
+                    //    {
+                    //        if (new int[] { 1, 2 }.Contains(os))
+                    //        {
 
-                                await DTC.Emulation.SetScrollbarsHiddenAsync(true);
-                                await DTC.Emulation.SetDeviceMetricsOverrideAsync(
-                                    width: cssWidth,
-                                    height: cssHeight,
-                                    deviceScaleFactor: deviceScale,
-                                    mobile: true, scale: 1.0, screenWidth: sw, screenHeight: sh);
-                                await DTC.Emulation.SetUserAgentOverrideAsync(userAgent: ua, platform: (os == 1 ? "Android" : "iPhone"));
+                    //            await DTC.Emulation.SetScrollbarsHiddenAsync(true);
+                    //            await DTC.Emulation.SetDeviceMetricsOverrideAsync(
+                    //                width: cssWidth,
+                    //                height: cssHeight,
+                    //                deviceScaleFactor: deviceScale,
+                    //                mobile: true, scale: 1.0, screenWidth: sw, screenHeight: sh);
+                    //            await DTC.Emulation.SetUserAgentOverrideAsync(userAgent: ua, platform: (os == 1 ? "Android" : "iPhone"));
 
-                                ///await DTC.Emulation.SetAutoDarkModeOverrideAsync(true);
-                                //await DTC.Emulation.SetTouchEmulationEnabledAsync(true, 10);
-                                //await DTC.Emulation.SetDeviceMetricsOverrideAsync(0, 0, 2.0, true);
-                            }
-                            else
-                            {
-                                //await DTC.Emulation.SetUserAgentOverrideAsync(userAgent: ua);
-                            }
-                        }
-                    });
+                    //            ///await DTC.Emulation.SetAutoDarkModeOverrideAsync(true);
+                    //            //await DTC.Emulation.SetTouchEmulationEnabledAsync(true, 10);
+                    //            //await DTC.Emulation.SetDeviceMetricsOverrideAsync(0, 0, 2.0, true);
+                    //        }
+                    //        else
+                    //        {
+                    //            //await DTC.Emulation.SetUserAgentOverrideAsync(userAgent: ua);
+                    //        }
+                    //    }
+                    //});
                 };
 
 
@@ -154,7 +164,10 @@ namespace CefClient
                 return new BrowserSlot(browserId, panel, browser, requestContext, _hostPanel);
             }, cancellationToken);
 
-            return _slots.TryAdd(browserId, slot);
+
+            var added = _slots.TryAdd(browserId, slot);
+            LogInfo($"CreateBrowserAsync finished. browserId={browserId}, success={added}");
+            return added;
         }
 
 
@@ -166,6 +179,7 @@ namespace CefClient
         {
             if (!_slots.TryGetValue(browserId, out var slot))
             {
+                LogInfo($"RunBrowserAsync failed, browserId not found. browserId={browserId}");
                 return new BrowserRunResult
                 {
                     BrowserId = browserId,
@@ -173,7 +187,7 @@ namespace CefClient
                     Message = "browserId 不存在"
                 };
             }
-
+            LogInfo($"RunBrowserAsync started. browserId={browserId}");
             return await slot.RunAsync(payload, cancellationToken);
         }
 
@@ -182,6 +196,7 @@ namespace CefClient
         {
             if (_slots.TryRemove(browserId, out var slot))
             {
+                LogInfo($"RemoveBrowserFastAsync started. browserId={browserId}");
                 await UiInvokeAsync(() =>
                 {
                     if (_hostPanel.Controls.Contains(slot.HostPanel))
@@ -194,16 +209,23 @@ namespace CefClient
                     {
                         await Task.Delay(200);
                         await slot.DisposeHeavyAsync();
+                        LogInfo($"RemoveBrowserFastAsync finished. browserId={browserId}");
                     }
                     catch
                     {
+                        LogInfo($"RemoveBrowserFastAsync dispose failed. browserId={browserId}");
                     }
                 });
+            }
+            else
+            {
+                LogInfo($"RemoveBrowserFastAsync skipped, browser not found. browserId={browserId}");
             }
         }
 
         public async Task RemoveAllBrowsersAsync()
         {
+            LogInfo("RemoveAllBrowsersAsync started.");
             foreach (var kv in _slots.ToArray())
             {
                 if (_slots.TryRemove(kv.Key, out var slot))
@@ -211,6 +233,7 @@ namespace CefClient
                     await slot.DisposeAsync();
                 }
             }
+            LogInfo("RemoveAllBrowsersAsync finished.");
         }
 
         private Task UiInvokeAsync(Action action, CancellationToken cancellationToken = default)
@@ -250,7 +273,9 @@ namespace CefClient
                 }
                 catch (Exception ex)
                 {
+                    LogInfo($"UiInvokeAsync execute failed: {ex.Message}");
                     tcs.TrySetException(ex);
+                    
                 }
             }
 
@@ -267,6 +292,7 @@ namespace CefClient
             }
             catch (Exception ex)
             {
+                LogInfo($"UiInvokeAsync execute failed: {ex.Message}");
                 tcs.TrySetException(ex);
             }
 
@@ -310,6 +336,7 @@ namespace CefClient
                 }
                 catch (Exception ex)
                 {
+                    LogInfo($"UiInvokeAsync<T> execute failed: {ex.Message}");
                     tcs.TrySetException(ex);
                 }
             }
@@ -327,6 +354,7 @@ namespace CefClient
             }
             catch (Exception ex)
             {
+                LogInfo($"UiInvokeAsync<T> invoke failed: {ex.Message}");
                 tcs.TrySetException(ex);
             }
 
@@ -343,6 +371,25 @@ namespace CefClient
             {
                 return false;
             }
+        }
+
+        public async Task SendLogAsync(string message, CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                if (LogAsync != null)
+                {
+                    await LogAsync.Invoke(message, cancellationToken);
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        private void LogInfo(string message)
+        {
+            _ = SendLogAsync(message);
         }
     }
 }

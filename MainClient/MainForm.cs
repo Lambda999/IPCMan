@@ -455,7 +455,7 @@ namespace MainClient
                 return Task.CompletedTask;
             };
 
- 
+
             var completedUvTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             int dispatchedUvCount = 0;
             int completedUvCount = 0;
@@ -543,9 +543,11 @@ namespace MainClient
 
                         NormalizeDevice(dev, ctx.OS);
 
-                        await session.CreateBrowserAsync(ctx.UniqueId, browserId, innerToken);
-
                         var uvPayload = BuildRunBrowserPayload(ctx, rawTask, dev, consumerId, uvIndex);
+
+                        await session.CreateBrowserAsync(ctx.UniqueId, browserId, uvPayload, innerToken);
+
+
                         await session.RunBrowserNoWaitAsync(
                             ctx.UniqueId,
                             browserId,

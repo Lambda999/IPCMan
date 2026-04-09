@@ -103,6 +103,7 @@ public sealed class PipeHostService : IAsyncDisposable
                     break;
 
                 case "exit":
+                    await WaitRunTasksAsync(TimeSpan.FromSeconds(10));
                     await _mainForm.RemoveAllBrowsersAsync();
                     return;
             }
@@ -111,7 +112,9 @@ public sealed class PipeHostService : IAsyncDisposable
 
     private async Task HandleCreateBrowserAsync(PipeEnvelope req, CancellationToken token)
     {
-        var ok = await _mainForm.CreateBrowserAsync(req.BrowserId!, req.Payload, token);
+        var payload = req.Payload ?? _taskPayload;
+
+        var ok = await _mainForm.CreateBrowserAsync(req.BrowserId!, payload, token);
         await SendLogAsync($"CreateBrowserAsync done. browserId={req.BrowserId}, success={ok}", token);
 
         await SendAsync(new PipeEnvelope
@@ -136,6 +139,12 @@ public sealed class PipeHostService : IAsyncDisposable
         var browserId = req.BrowserId!;
         var payload = req.Payload ?? _taskPayload;
         await SendLogAsync($"RunBrowserAsync start. browserId={browserId}", token);
+
+        if (_runTasks.ContainsKey(browserId))
+        {
+            await SendLogAsync($"RunBrowserAsync skipped duplicated browserId={browserId}", token);
+            return;
+        }
 
         var runTask = Task.Run(async () =>
         {
@@ -208,8 +217,20 @@ public sealed class PipeHostService : IAsyncDisposable
             await SendLogAsync($"browserResult sent. browserId={browserId}, success={result.Success}", CancellationToken.None);
         }, CancellationToken.None);
 
-        _runTasks.AddOrUpdate(browserId, runTask, (_, __) => runTask);
-        _ = runTask.ContinueWith(_ => _runTasks.TryRemove(browserId, out _), CancellationToken.None);
+        if (!_runTasks.TryAdd(browserId, runTask))
+        {
+            await SendLogAsync($"RunBrowserAsync TryAdd failed, duplicated browserId={browserId}", token);
+            return;
+        }
+
+        try
+        {
+            await runTask;
+        }
+        finally
+        {
+            _runTasks.TryRemove(browserId, out _);
+        }
     }
 
     private async Task HandleRemoveBrowserAsync(PipeEnvelope req, CancellationToken token)
@@ -308,6 +329,7 @@ public sealed class PipeHostService : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         try { _cts.Cancel(); } catch { }
+        try { await WaitRunTasksAsync(TimeSpan.FromSeconds(3)); } catch { }
 
         _reader?.Dispose();
         _writer?.Dispose();
@@ -316,5 +338,28 @@ public sealed class PipeHostService : IAsyncDisposable
         _cts.Dispose();
 
         await Task.CompletedTask;
+    }
+
+    private async Task WaitRunTasksAsync(TimeSpan timeout)
+    {
+        var tasks = new List<Task>();
+        foreach (var task in _runTasks.Values)
+        {
+            tasks.Add(task);
+        }
+
+        if (tasks.Count == 0)
+            return;
+
+        try
+        {
+            var all = Task.WhenAll(tasks);
+            var finished = await Task.WhenAny(all, Task.Delay(timeout));
+            if (finished == all)
+                await all;
+        }
+        catch
+        {
+        }
     }
 }
