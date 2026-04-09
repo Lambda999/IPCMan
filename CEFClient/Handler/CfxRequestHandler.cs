@@ -1,6 +1,6 @@
 ﻿using CefSharp;
 using CefSharp.Handler;
-using Newtonsoft.Json.Linq;
+using System.Text.Json.Nodes;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -11,9 +11,9 @@ namespace CefClient.Handler
 {
     public class CfxRequestHandler : RequestHandler
     {
-        public readonly JObject _args = null;
+        public readonly JsonObject _args = null;
         public bool UseLocalCache = false;
-        public CfxRequestHandler(JObject args)
+        public CfxRequestHandler(JsonObject args)
         {
             this._args = args;
         }

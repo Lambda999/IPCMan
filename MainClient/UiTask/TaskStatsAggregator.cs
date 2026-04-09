@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Logging;
-using Newtonsoft.Json.Linq;
-using Newtonsoft.Json;
+using System.Text.Json.Nodes;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Collections.Concurrent;
 using System.Threading.Channels;
 using MainClient.Infrastructure;
@@ -26,20 +27,20 @@ namespace MainClient.UiTask
     );
 
     public record AdWord(
-        [property: JsonProperty("category")] string Category,
-        [property: JsonProperty("word")] string Word
+        [property: JsonPropertyName("category")] string Category,
+        [property: JsonPropertyName("word")] string Word
     );
 
 
     public sealed class AdKeywordDomain
     {
-        [property: JsonProperty("keyword")]
+        [property: JsonPropertyName("keyword")]
         public string Keyword { get; set; } = "";
 
-        [property: JsonProperty("domains")]
+        [property: JsonPropertyName("domains")]
         public List<string> Domains { get; set; } = new();
 
-        [property: JsonProperty("brands")]
+        [property: JsonPropertyName("brands")]
         public List<string> Brands { get; set; } = new();
     }
     public sealed class AdKeywordDomainAccumulator

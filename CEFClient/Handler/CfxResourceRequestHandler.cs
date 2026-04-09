@@ -1,4 +1,4 @@
-
+﻿
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -7,16 +7,16 @@ using CefClient.Handler.Event;
 using CefSharp;
 using CefSharp.Handler;
 using CefSharp.ResponseFilter;
-using Newtonsoft.Json.Linq;
+using System.Text.Json.Nodes;
 
 namespace CefClient.Handler
 {
     public class CfxResourceRequestHandler : ResourceRequestHandler
     {
-        public readonly JObject _args = null;
+        public readonly JsonObject _args = null;
         private string _localCacheFilePath = string.Empty;
         private bool IsLocalCacheFileExist => System.IO.File.Exists(_localCacheFilePath);
-        public CfxResourceRequestHandler(JObject args)
+        public CfxResourceRequestHandler(JsonObject args)
         {
             this._args = args;
         }

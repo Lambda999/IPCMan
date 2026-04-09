@@ -1,6 +1,6 @@
 ﻿using CefSharp;
 using CefSharp.Handler;
-using Newtonsoft.Json.Linq;
+using System.Text.Json.Nodes;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -11,12 +11,12 @@ namespace CefClient.Handler
 {
     public class CefRequestHandler : RequestHandler
     {
-        public readonly JObject _args = null;
+        public readonly JsonObject _args = null;
         public readonly string userAgent = null;
         private readonly string referer = null;
 
 
-        public CefRequestHandler(JObject args,string userAgent, string referer)
+        public CefRequestHandler(JsonObject args,string userAgent, string referer)
         {
             this._args = args;
             this.userAgent = userAgent;
