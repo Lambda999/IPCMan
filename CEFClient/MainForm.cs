@@ -1,4 +1,4 @@
-﻿using CefClient.Handler;
+using CefClient.Handler;
 using CefClient.Viewport;
 using CefSharp;
 using CefSharp.DevTools;
@@ -278,7 +278,8 @@ namespace CefClient
                     {
                         Dock = DockStyle.None,
                         Location = new Point(0, 0),
-                        Size = new Size(cssWidth + 48, cssHeight)
+                        Size = new Size(cssWidth + 48, cssHeight),
+                        RequestHandler = new AppSchemeBlockRequestHandler()
                     };
 
                     panel.Controls.Add(createdBrowser);
