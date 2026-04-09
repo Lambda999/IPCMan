@@ -520,6 +520,22 @@ namespace MainClient
                 }
             };
 
+            using var stopNotifyReg = token.Register(() =>
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await session.SendExitAsync(CancellationToken.None);
+                        _logger.LogInformation("Sent exit to CefClient immediately due to stop request. taskId={TaskId}", ctx.TaskId);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex, "SendExitAsync on stop request failed. taskId={TaskId}", ctx.TaskId);
+                    }
+                });
+            });
+
             try
             {
                 await session.StartAsync(token);
