@@ -1,7 +1,7 @@
 ﻿using MainClient.Infrastructure;
 using Microsoft.Extensions.Logging;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
@@ -19,7 +19,7 @@ namespace MainClient.Common
     public class IpEntity
     {
         public string value { get; set; } = string.Empty;
-        public JToken json { get; set; }
+        public JsonNode json { get; set; }
         public IPFormat format { get; set; } = IPFormat.TXT;
     }
 
@@ -27,28 +27,71 @@ namespace MainClient.Common
 
     public class IpHelper
     {
-        private static JArray region_1;
-        private static JArray region_2;
-        private static JArray region_3;
-        private static JArray region_4_1;
-        private static JArray region_4_2;
-        private static JArray region_ipzan;
-        private static JArray region_51dail;
-        private static JArray region_shenlong;
+        private static JsonArray region_1;
+        private static JsonArray region_2;
+        private static JsonArray region_3;
+        private static JsonArray region_4_1;
+        private static JsonArray region_4_2;
+        private static JsonArray region_ipzan;
+        private static JsonArray region_51dail;
+        private static JsonArray region_shenlong;
 
         static string[] delimiters = { "\r", "\n", System.Environment.NewLine };
         static SemaphoreSlim _mutex = new SemaphoreSlim(1);
         static IpHelper()
         {
-            region_1 = (JArray)JsonConvert.DeserializeObject(Properties.Resources.region_1);
-            region_2 = (JArray)JsonConvert.DeserializeObject(Properties.Resources.region_2);
-            region_3 = (JArray)JsonConvert.DeserializeObject(Properties.Resources.region_3);
-            region_4_1 = (JArray)JsonConvert.DeserializeObject(Properties.Resources.region_4_1);
-            region_4_2 = (JArray)JsonConvert.DeserializeObject(Properties.Resources.region_4_2);
-            region_ipzan = (JArray)JsonConvert.DeserializeObject(Properties.Resources.region_ipzan);
-            region_51dail = (JArray)JsonConvert.DeserializeObject(Properties.Resources.region_51daili);
-            region_shenlong = (JArray)JsonConvert.DeserializeObject(Properties.Resources.region_shenlong);
+            region_1 = JsonNode.Parse(Properties.Resources.region_1)?.AsArray() ?? new JsonArray();
+            region_2 = JsonNode.Parse(Properties.Resources.region_2)?.AsArray() ?? new JsonArray();
+            region_3 = JsonNode.Parse(Properties.Resources.region_3)?.AsArray() ?? new JsonArray();
+            region_4_1 = JsonNode.Parse(Properties.Resources.region_4_1)?.AsArray() ?? new JsonArray();
+            region_4_2 = JsonNode.Parse(Properties.Resources.region_4_2)?.AsArray() ?? new JsonArray();
+            region_ipzan = JsonNode.Parse(Properties.Resources.region_ipzan)?.AsArray() ?? new JsonArray();
+            region_51dail = JsonNode.Parse(Properties.Resources.region_51daili)?.AsArray() ?? new JsonArray();
+            region_shenlong = JsonNode.Parse(Properties.Resources.region_shenlong)?.AsArray() ?? new JsonArray();
         }
+
+        private static JsonNode? FindMaxCodeNodeByName(JsonArray source, string nameKey, string codeKey, string keyword)
+        {
+            JsonNode? best = null;
+            long bestCode = long.MinValue;
+
+            foreach (var node in source)
+            {
+                if (node is null)
+                    continue;
+
+                var name = node[nameKey]?.ToString();
+                if (string.IsNullOrWhiteSpace(name) || !name.Contains(keyword, StringComparison.Ordinal))
+                    continue;
+
+                var codeText = node[codeKey]?.ToString();
+                if (!long.TryParse(codeText, out var code))
+                    continue;
+
+                if (code > bestCode)
+                {
+                    bestCode = code;
+                    best = node;
+                }
+            }
+
+            return best;
+        }
+
+        private static JsonNode? FindCityByName(JsonNode? provinceNode, string cityKeyword)
+        {
+            if (provinceNode?["mallCityList"] is not JsonArray cityList)
+                return null;
+
+            foreach (var city in cityList)
+            {
+                if (city?["cityName"]?.ToString().Contains(cityKeyword, StringComparison.Ordinal) == true)
+                    return city;
+            }
+
+            return null;
+        }
+
         private readonly ILogger _logger;
         private readonly AppSettings _appSettings;
         private readonly IHttpClientFactory _httpClientFactory;
@@ -67,13 +110,13 @@ namespace MainClient.Common
                 var client = _httpClientFactory.CreateClient();
                 client.DefaultRequestHeaders.Clear();
                 client.DefaultRequestHeaders.TryAddWithoutValidation("Content-Type", "application/json; charset=utf-8");
-                var bidRequest = new JObject();
+                var bidRequest = new JsonObject();
                 bidRequest["id"] = taskid;
                 bidRequest["host"] = await CommonHelper.GetHostAsync();
                 bidRequest["agency"] = proxyIpUrl;// new Uri(proxyIpUrl).GetLeftPart(UriPartial.Authority);
                 //bidRequest["agency"] = new Uri(proxyIpUrl).GetLeftPart(UriPartial.Authority);
                 bidRequest["id"] = taskid;
-                var postData = JsonConvert.SerializeObject(bidRequest);
+                var postData = JsonSerializer.Serialize(bidRequest);
                 HttpContent content = new StringContent(postData);
                 content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
                 await client.PostAsync($"{baseUrl}/api/ip_stat.php?action=invoke&t={System.DateTime.Now.Ticks}", content);
@@ -92,12 +135,12 @@ namespace MainClient.Common
                 var client = _httpClientFactory.CreateClient();
                 client.DefaultRequestHeaders.Clear();
                 client.DefaultRequestHeaders.TryAddWithoutValidation("Content-Type", "application/json; charset=utf-8");
-                var bidRequest = new JObject();
+                var bidRequest = new JsonObject();
                 bidRequest["id"] = taskid;
                 bidRequest["host"] = await CommonHelper.GetHostAsync();
                 bidRequest["agency"] = proxyIpUrl;// new Uri(proxyIpUrl).GetLeftPart(UriPartial.Authority);
                 bidRequest["ip"] = realIp;
-                var postData = JsonConvert.SerializeObject(bidRequest);
+                var postData = JsonSerializer.Serialize(bidRequest);
                 HttpContent content = new StringContent(postData);
                 content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
                 await client.PostAsync($"{baseUrl}/api/ip_stat.php?action=reward&t={System.DateTime.Now.Ticks}", content);
@@ -110,7 +153,7 @@ namespace MainClient.Common
 
 
         private static ConcurrentQueue<IpEntity> ipQueues = new ConcurrentQueue<IpEntity>();
-        public async Task<IpEntity> GetProxyIpAsync(JToken task, int count = 0)
+        public async Task<IpEntity> GetProxyIpAsync(JsonNode task, int count = 0)
         {
             if (ipQueues.TryDequeue(out var value))
             {
@@ -139,7 +182,7 @@ namespace MainClient.Common
                         }
                         else if (iPFormat == IPFormat.JSON)
                         {
-                            var json = JObject.Parse(content);
+                            var json = JsonNode.Parse(content)?.AsObject();
                             if (url.Contains("service.ipzan.com"))
                             {
                                 foreach (var data in json.SelectToken("data.list").Children())
@@ -182,7 +225,7 @@ namespace MainClient.Common
 
 
 
-        private string GetIpUrl(JToken task, out IPFormat format, int count = 0)
+        private string GetIpUrl(JsonNode task, out IPFormat format, int count = 0)
         {
             format = IPFormat.TXT;
             var url = _appSettings.ProxyIpUrl.Trim();
@@ -318,13 +361,13 @@ namespace MainClient.Common
                             var m1 = Regex.Match(address[0], @"\w+");
                             if (m1.Success)
                             {
-                                var area_prov = region_51dail.Where(w => w["provinceName"].ToString().Contains(m1.Value)).OrderByDescending(o => Convert.ToInt64(o["provinceCode"].ToString())).FirstOrDefault();
+                                var area_prov = FindMaxCodeNodeByName(region_51dail, "provinceName", "provinceCode", m1.Value);
                                 if (area_prov != null)
                                 {
                                     var m2 = Regex.Match(address[1], @"\w+");
                                     if (m2.Success)
                                     {
-                                        var area_city = area_prov["mallCityList"].FirstOrDefault(w => w["cityName"].ToString().Contains(m2.Value));
+                                        var area_city = FindCityByName(area_prov, m2.Value);
                                         if (area_city != null)
                                         {
                                             if (Regex.IsMatch(url, @"regionCode=[\w]*[^&]?"))
@@ -355,7 +398,7 @@ namespace MainClient.Common
                             var m1 = Regex.Match(address[0], @"\w+");
                             if (m1.Success)
                             {
-                                var area_prov = region_51dail.Where(w => w["provinceName"].ToString().Contains(m1.Value)).OrderByDescending(o => Convert.ToInt64(o["provinceCode"].ToString())).FirstOrDefault();
+                                var area_prov = FindMaxCodeNodeByName(region_51dail, "provinceName", "provinceCode", m1.Value);
                                 if (area_prov != null)
                                 {
                                     if (Regex.IsMatch(url, @"regionCode=[\w]*[^&]?"))
@@ -415,13 +458,13 @@ namespace MainClient.Common
                             var m1 = Regex.Match(address[1], @"\w+");
                             if (m1.Success)
                             {
-                                var area_res = region_ipzan.Where(w => w["name"].ToString().Contains(m1.Value)).OrderByDescending(o => Convert.ToInt64(o["code"].ToString())).FirstOrDefault();
+                                var area_res = FindMaxCodeNodeByName(region_ipzan, "name", "code", m1.Value);
                                 if (area_res == null)
                                 {
                                     m1 = Regex.Match(address[0], @"\w+");
                                     if (m1.Success)
                                     {
-                                        area_res = region_ipzan.Where(w => w["name"].ToString().Contains(m1.Value)).OrderByDescending(o => Convert.ToInt64(o["code"].ToString())).FirstOrDefault();
+                                        area_res = FindMaxCodeNodeByName(region_ipzan, "name", "code", m1.Value);
                                     }
                                 }
                                 if (area_res != null)
@@ -438,7 +481,7 @@ namespace MainClient.Common
                             var m1 = Regex.Match(address[0], @"\w+");
                             if (m1.Success)
                             {
-                                var area_res = region_ipzan.Where(w => w["name"].ToString().Contains(m1.Value)).OrderByDescending(o => Convert.ToInt64(o["code"].ToString())).FirstOrDefault();
+                                var area_res = FindMaxCodeNodeByName(region_ipzan, "name", "code", m1.Value);
                                 if (area_res != null)
                                 {
                                     if (Regex.IsMatch(url, @"area=[\w]*[^&]?"))
