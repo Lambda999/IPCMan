@@ -49,6 +49,49 @@ namespace MainClient.Common
             region_51dail = JsonNode.Parse(Properties.Resources.region_51daili)?.AsArray() ?? new JsonArray();
             region_shenlong = JsonNode.Parse(Properties.Resources.region_shenlong)?.AsArray() ?? new JsonArray();
         }
+
+        private static JsonNode? FindMaxCodeNodeByName(JsonArray source, string nameKey, string codeKey, string keyword)
+        {
+            JsonNode? best = null;
+            long bestCode = long.MinValue;
+
+            foreach (var node in source)
+            {
+                if (node is null)
+                    continue;
+
+                var name = node[nameKey]?.ToString();
+                if (string.IsNullOrWhiteSpace(name) || !name.Contains(keyword, StringComparison.Ordinal))
+                    continue;
+
+                var codeText = node[codeKey]?.ToString();
+                if (!long.TryParse(codeText, out var code))
+                    continue;
+
+                if (code > bestCode)
+                {
+                    bestCode = code;
+                    best = node;
+                }
+            }
+
+            return best;
+        }
+
+        private static JsonNode? FindCityByName(JsonNode? provinceNode, string cityKeyword)
+        {
+            if (provinceNode?["mallCityList"] is not JsonArray cityList)
+                return null;
+
+            foreach (var city in cityList)
+            {
+                if (city?["cityName"]?.ToString().Contains(cityKeyword, StringComparison.Ordinal) == true)
+                    return city;
+            }
+
+            return null;
+        }
+
         private readonly ILogger _logger;
         private readonly AppSettings _appSettings;
         private readonly IHttpClientFactory _httpClientFactory;
@@ -318,14 +361,13 @@ namespace MainClient.Common
                             var m1 = Regex.Match(address[0], @"\w+");
                             if (m1.Success)
                             {
-                                var area_prov = region_51dail.Where(w => w["provinceName"].ToString().Contains(m1.Value)).OrderByDescending(o => Convert.ToInt64(o["provinceCode"].ToString())).FirstOrDefault();
+                                var area_prov = FindMaxCodeNodeByName(region_51dail, "provinceName", "provinceCode", m1.Value);
                                 if (area_prov != null)
                                 {
                                     var m2 = Regex.Match(address[1], @"\w+");
                                     if (m2.Success)
                                     {
-                                        var cityList = area_prov["mallCityList"] as JsonArray;
-                                        var area_city = cityList?.FirstOrDefault(w => w?["cityName"]?.ToString().Contains(m2.Value) == true);
+                                        var area_city = FindCityByName(area_prov, m2.Value);
                                         if (area_city != null)
                                         {
                                             if (Regex.IsMatch(url, @"regionCode=[\w]*[^&]?"))
@@ -356,7 +398,7 @@ namespace MainClient.Common
                             var m1 = Regex.Match(address[0], @"\w+");
                             if (m1.Success)
                             {
-                                var area_prov = region_51dail.Where(w => w["provinceName"].ToString().Contains(m1.Value)).OrderByDescending(o => Convert.ToInt64(o["provinceCode"].ToString())).FirstOrDefault();
+                                var area_prov = FindMaxCodeNodeByName(region_51dail, "provinceName", "provinceCode", m1.Value);
                                 if (area_prov != null)
                                 {
                                     if (Regex.IsMatch(url, @"regionCode=[\w]*[^&]?"))
@@ -416,13 +458,13 @@ namespace MainClient.Common
                             var m1 = Regex.Match(address[1], @"\w+");
                             if (m1.Success)
                             {
-                                var area_res = region_ipzan.Where(w => w["name"].ToString().Contains(m1.Value)).OrderByDescending(o => Convert.ToInt64(o["code"].ToString())).FirstOrDefault();
+                                var area_res = FindMaxCodeNodeByName(region_ipzan, "name", "code", m1.Value);
                                 if (area_res == null)
                                 {
                                     m1 = Regex.Match(address[0], @"\w+");
                                     if (m1.Success)
                                     {
-                                        area_res = region_ipzan.Where(w => w["name"].ToString().Contains(m1.Value)).OrderByDescending(o => Convert.ToInt64(o["code"].ToString())).FirstOrDefault();
+                                        area_res = FindMaxCodeNodeByName(region_ipzan, "name", "code", m1.Value);
                                     }
                                 }
                                 if (area_res != null)
@@ -439,7 +481,7 @@ namespace MainClient.Common
                             var m1 = Regex.Match(address[0], @"\w+");
                             if (m1.Success)
                             {
-                                var area_res = region_ipzan.Where(w => w["name"].ToString().Contains(m1.Value)).OrderByDescending(o => Convert.ToInt64(o["code"].ToString())).FirstOrDefault();
+                                var area_res = FindMaxCodeNodeByName(region_ipzan, "name", "code", m1.Value);
                                 if (area_res != null)
                                 {
                                     if (Regex.IsMatch(url, @"area=[\w]*[^&]?"))
