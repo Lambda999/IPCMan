@@ -42,6 +42,11 @@
         /// </summary>
         public int IpTtl { get; set; }
 
+        /// <summary>
+        /// 单 UV 派发间隔（毫秒）
+        /// </summary>
+        public int UVInterval { get; set; }
+
         public string UVOverride { get; set; }
 
         public string PVOverride { get; set; }
