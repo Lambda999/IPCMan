@@ -211,6 +211,21 @@ public sealed class PipeHostService : IAsyncDisposable
                     cancellationToken: CancellationToken.None,
                     data: result.Data);
             }
+            catch (ObjectDisposedException)
+                when (_cts.IsCancellationRequested || token.IsCancellationRequested || _mainForm.IsDisposed)
+            {
+                var dataObj = result.Data as System.Text.Json.Nodes.JsonObject ?? new System.Text.Json.Nodes.JsonObject();
+                dataObj["removedByCefClient"] = true;
+                dataObj["removeSkippedDueToShutdown"] = true;
+                result.Data = dataObj;
+                await SendBrowserStatusAsync(
+                    browserId,
+                    stage: "removed",
+                    success: true,
+                    message: "browser removed during shutdown",
+                    cancellationToken: CancellationToken.None,
+                    data: result.Data);
+            }
             catch (Exception ex)
             {
                 var dataObj = result.Data as System.Text.Json.Nodes.JsonObject ?? new System.Text.Json.Nodes.JsonObject();
@@ -275,6 +290,25 @@ public sealed class PipeHostService : IAsyncDisposable
                 stage: "removed",
                 success: true,
                 message: "browser removed by main command",
+                cancellationToken: token);
+        }
+        catch (ObjectDisposedException) when (_cts.IsCancellationRequested || token.IsCancellationRequested || _mainForm.IsDisposed)
+        {
+            await SendLogAsync($"RemoveBrowserFastAsync skipped due to shutdown. browserId={req.BrowserId}", token);
+            await SendAsync(new PipeEnvelope
+            {
+                Type = "browserRemoved",
+                TaskId = _taskId,
+                BrowserId = req.BrowserId,
+                Success = true,
+                Message = "removed during shutdown"
+            }, token);
+
+            await SendBrowserStatusAsync(
+                req.BrowserId,
+                stage: "removed",
+                success: true,
+                message: "browser removed during shutdown",
                 cancellationToken: token);
         }
         catch (Exception ex)
