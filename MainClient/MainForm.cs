@@ -362,97 +362,6 @@ namespace MainClient
         /// <param name="task"></param>
         /// <param name="token"></param>
         /// <returns></returns>
-        private async Task ConsumerAsyncv2(int consumerId, JToken task, CancellationToken token)
-        {
-            try
-            {
-                token.ThrowIfCancellationRequested();
-
-                var parseResult = ParseTask(task);
-                if (!parseResult.Success)
-                {
-                    _logger.LogWarning("ConsumerAsync skip malformed task: {Task}", task?.ToString(Newtonsoft.Json.Formatting.None));
-                    return;
-                }
-
-                var ctx = parseResult.Context!;
-                ApplyUvPvOverrides(ctx);
-                ///检测设备接口是否可用
-                var check_dev = await GetDeviceForTaskAsync(ctx.OS, ctx.TaskId, 0, token);
-                if (check_dev == null)
-                {
-                    _logger.LogWarning("ConsumerAsync get device failed after retries. taskId={TaskId}, uv={Uv}", ctx.TaskId, 1);
-                    return;
-                }
-
-                await PrepareProxyContextAsync(ctx, task, token);
-
-                var ipTtlSeconds = _appSettings.IpTtl;
-                if (ipTtlSeconds <= 0)
-                {
-                    _logger.LogWarning("ConsumerAsync invalid IpTtl={IpTtl}, taskId={TaskId}", ipTtlSeconds, ctx.TaskId);
-                    return;
-                }
-
-                using var ipTtlCts = new CancellationTokenSource(TimeSpan.FromSeconds(ipTtlSeconds));
-                using var consumerLinkedCts = CancellationTokenSource.CreateLinkedTokenSource(token, ipTtlCts.Token);
-                var consumerToken = consumerLinkedCts.Token;
-
-                for (int uvIndex = 0; uvIndex < ctx.TotalUV; uvIndex++)
-                {
-                    if (token.IsCancellationRequested)
-                        return;
-
-                    try
-                    {
-                        _aggregator.Enqueue(new TaskEvent(ctx.TaskId, StateType.Request, 1));
-
-                        var dev = await GetDeviceForTaskAsync(ctx.OS, ctx.TaskId, uvIndex, consumerToken);
-                        if (dev == null)
-                            continue;
-
-                        NormalizeDevice(dev, ctx.OS);
-
-                        var pluginArgs = BuildPluginArgs(ctx, task, dev, consumerId, uvIndex);
-
-                        bool stopRemainingUv = await ExecutePluginOnceAsync(
-                            ctx,
-                            pluginArgs,
-                            consumerId,
-                            uvIndex,
-                            consumerToken);
-
-                        if (stopRemainingUv)
-                            break;
-                    }
-                    catch (OperationCanceledException) when (token.IsCancellationRequested)
-                    {
-                        return;
-                    }
-                    catch (OperationCanceledException) when (ipTtlCts.IsCancellationRequested)
-                    {
-                        LogWriteLine($"任务 {ctx.TaskTitle}[{ctx.TaskId}] 的 IP 总有效时长已到，停止后续 UV。");
-                        break;
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex,
-                            "ConsumerAsync uv failed. taskId={TaskId}, uv={Uv}, consumer={ConsumerId}",
-                            ctx.TaskId, uvIndex + 1, consumerId);
-                    }
-                }
-            }
-            catch (OperationCanceledException) when (token.IsCancellationRequested)
-            {
-                return;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, $"ConsumerAsync failed:{ex.Message}");
-            }
-        }
-
-
         private async Task ConsumerAsync(int consumerId, JToken task, CancellationToken token)
         {
             try
@@ -546,61 +455,7 @@ namespace MainClient
                 return Task.CompletedTask;
             };
 
-            var completedUvTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-            int dispatchedUvCount = 0;
-            int completedUvCount = 0;
-            bool stopRemainingUvByResult = false;
-
-            session.OnBrowserResult += async response =>
-            {
-                if (!string.Equals(response.TaskId, ctx.UniqueId, StringComparison.OrdinalIgnoreCase))
-                    return;
-
-                if (string.IsNullOrWhiteSpace(response.BrowserId))
-                    return;
-
-                var uvNumber = Interlocked.Increment(ref completedUvCount);
-                _logger.LogInformation(
-                    "RunBrowserAsync done. taskId={TaskId}, uv={Uv}, browserId={BrowserId}, success={Success}, msg={Message}",
-                    ctx.TaskId,
-                    uvNumber,
-                    response.BrowserId,
-                    response.Success,
-                    response.Message);
-
-                var result = new BrowserRunResponse
-                {
-                    Success = response.Success ?? false,
-                    Message = response.Message ?? string.Empty,
-                    Data = response.Data
-                };
-
-                if (ShouldStopRemainingUv(ctx, result))
-                {
-                    stopRemainingUvByResult = true;
-                }
-
-                var removedByCefClient = response.Data?["removedByCefClient"]?.GetValue<bool?>() ?? false;
-                if (!removedByCefClient)
-                {
-                    try
-                    {
-                        await session.RemoveBrowserAsync(ctx.UniqueId, response.BrowserId, CancellationToken.None);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogDebug(ex,
-                            "RemoveBrowserAsync failed after browserResult. taskId={TaskId}, browserId={BrowserId}",
-                            ctx.TaskId, response.BrowserId);
-                    }
-                }
-
-                if (Volatile.Read(ref completedUvCount) >= Volatile.Read(ref dispatchedUvCount))
-                {
-                    completedUvTcs.TrySetResult(true);
-                }
-            };
-
+ 
             var completedUvTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             int dispatchedUvCount = 0;
             int completedUvCount = 0;
@@ -772,8 +627,8 @@ namespace MainClient
                 ["uv"] = uvIndex + 1,
                 ["consumerId"] = consumerId,
                 ["os"] = (int)(ctx.OS),
-                ["device"] = JsonNode.Parse(System.Text.Json.JsonSerializer.Serialize(dev)),
-                ["rawTask"] = rawTask.ToString(Newtonsoft.Json.Formatting.None),
+                ["dev"] = JsonNode.Parse(System.Text.Json.JsonSerializer.Serialize(dev)),
+                ["task"] = rawTask.ToString(Newtonsoft.Json.Formatting.None),
                 ["url"] = ctx.Url,
             };
         }

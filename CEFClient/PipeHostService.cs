@@ -111,7 +111,7 @@ public sealed class PipeHostService : IAsyncDisposable
 
     private async Task HandleCreateBrowserAsync(PipeEnvelope req, CancellationToken token)
     {
-        var ok = await _mainForm.CreateBrowserAsync(req.BrowserId!, token);
+        var ok = await _mainForm.CreateBrowserAsync(req.BrowserId!, req.Payload, token);
         await SendLogAsync($"CreateBrowserAsync done. browserId={req.BrowserId}, success={ok}", token);
 
         await SendAsync(new PipeEnvelope

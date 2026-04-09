@@ -1,4 +1,7 @@
-﻿using CefSharp;
+﻿using CefClient.Handler;
+using CefClient.Viewport;
+using CefSharp;
+using CefSharp.DevTools;
 using CefSharp.WinForms;
 using System;
 using System.Collections.Concurrent;
@@ -38,7 +41,7 @@ namespace CefClient
         }
 
 
-        public async Task<bool> CreateBrowserAsync(string browserId, CancellationToken cancellationToken = default)
+        public async Task<bool> CreateBrowserAsync(string browserId, System.Text.Json.Nodes.JsonNode? payload, CancellationToken cancellationToken = default)
         {
             if (_slots.ContainsKey(browserId))
                 return true;
@@ -67,16 +70,86 @@ namespace CefClient
                     Width = 420,
                     Height = 920,
                     Margin = new Padding(5),
-                    BorderStyle = BorderStyle.FixedSingle
+                    BorderStyle = BorderStyle.None
                 };
+
+                var sw = payload?["dev"]?["sw"]?.GetValue<int>() ?? 1080;
+                var sh = payload?["dev"]?["sh"]?.GetValue<int>() ?? 1920;
+
+                var profileResult = AndroidViewportMatcher.Match(sw, sh);
+                var deviceScale = profileResult.DeviceScaleFactor;
+                int cssWidth = profileResult.CssWidth;
+                int cssHeight = profileResult.CssHeight;
+                panel.Width = cssWidth + 5;
+                panel.Height = cssHeight + 5;
 
                 var browser = new ChromiumWebBrowser("about:blank", requestContext)
                 {
-                    Dock = DockStyle.Fill
+                    Dock = DockStyle.None,
+                    Location = new Point(0, 0),
+                    Size = new Size(cssWidth, cssHeight)
                 };
+                var ua = payload?["dev"]?["ua"]?.ToString();
+                var os = payload?["os"]?.GetValue<int>() ?? 1;
+                this.Text = ua;
+
+                //var proxy_server = _args["proxy_server"].ToString();
+
+
+                //browser.RenderProcessMessageHandler = new RenderProcessMessageHandler(sw, sh, ua, os);
+                //browser.LifeSpanHandler = new CfxLifeSpanHandler();
+                //browser.JsDialogHandler = new CfxJsDialogHandler();
+                browser.IsBrowserInitializedChanged += (s, args) =>
+                {
+                    #region 代理设置
+                    //user:password@ip:port
+                    //if (Convert.ToBoolean(this._args["IsProxyMode"].ToString()) && !string.IsNullOrEmpty(proxy_server))
+                    //{
+                    //    var context = browser.GetBrowser().GetHost().RequestContext;
+                    //    var v = new Dictionary<string, object>();
+                    //    v["mode"] = "fixed_servers";
+                    //    v["server"] = proxy_server;
+                    //    bool success = context.SetPreference("proxy", v, out string error);
+                    //}
+                    #endregion
+
+                    Task.Run(async () =>
+                    {
+
+                        using (DevToolsClient DTC = browser.GetBrowser().GetDevToolsClient())
+                        {
+                            if (new int[] { 1, 2 }.Contains(os))
+                            {
+
+                                await DTC.Emulation.SetScrollbarsHiddenAsync(true);
+                                await DTC.Emulation.SetDeviceMetricsOverrideAsync(
+                                    width: cssWidth,
+                                    height: cssHeight,
+                                    deviceScaleFactor: deviceScale,
+                                    mobile: true, scale: 1.0, screenWidth: sw, screenHeight: sh);
+                                await DTC.Emulation.SetUserAgentOverrideAsync(userAgent: ua, platform: (os == 1 ? "Android" : "iPhone"));
+
+                                ///await DTC.Emulation.SetAutoDarkModeOverrideAsync(true);
+                                //await DTC.Emulation.SetTouchEmulationEnabledAsync(true, 10);
+                                //await DTC.Emulation.SetDeviceMetricsOverrideAsync(0, 0, 2.0, true);
+                            }
+                            else
+                            {
+                                //await DTC.Emulation.SetUserAgentOverrideAsync(userAgent: ua);
+                            }
+                        }
+                    });
+                };
+
+
+
+
+
+
 
                 panel.Controls.Add(browser);
                 _hostPanel.Controls.Add(panel);
+                _hostPanel.Controls.SetChildIndex(panel, 0);
 
                 return new BrowserSlot(browserId, panel, browser, requestContext, _hostPanel);
             }, cancellationToken);
