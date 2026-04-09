@@ -94,7 +94,7 @@ namespace CefClient
  
                 var title = await GetPageTitleAsync(Browser);
 
-                await Task.Delay(TimeSpan.FromSeconds(180));
+                await Task.Delay(TimeSpan.FromSeconds(180), cancellationToken);
 
                 return new BrowserRunResult
                 {

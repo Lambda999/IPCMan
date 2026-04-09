@@ -460,6 +460,15 @@ namespace MainClient
             int dispatchedUvCount = 0;
             int completedUvCount = 0;
             bool stopRemainingUvByResult = false;
+            var cefClientDisconnected = 0;
+
+            session.OnDisconnected += reason =>
+            {
+                Interlocked.Exchange(ref cefClientDisconnected, 1);
+                _logger.LogWarning("CefClient disconnected. taskId={TaskId}, reason={Reason}", ctx.TaskId, reason);
+                completedUvTcs.TrySetException(new IOException(reason));
+                return Task.CompletedTask;
+            };
 
             session.OnBrowserResult += async response =>
             {
@@ -510,6 +519,22 @@ namespace MainClient
                     completedUvTcs.TrySetResult(true);
                 }
             };
+
+            using var stopNotifyReg = token.Register(() =>
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await session.SendExitAsync(CancellationToken.None);
+                        _logger.LogInformation("Sent exit to CefClient immediately due to stop request. taskId={TaskId}", ctx.TaskId);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex, "SendExitAsync on stop request failed. taskId={TaskId}", ctx.TaskId);
+                    }
+                });
+            });
 
             try
             {
@@ -570,6 +595,14 @@ namespace MainClient
                     }
                     catch (Exception ex)
                     {
+                        if (Volatile.Read(ref cefClientDisconnected) == 1 || IsCefClientDisconnected(ex))
+                        {
+                            _logger.LogWarning(ex,
+                                "CefClient disconnected during uv execution. taskId={TaskId}, uv={Uv}, consumer={ConsumerId}",
+                                ctx.TaskId, uvIndex + 1, consumerId);
+                            return false;
+                        }
+
                         _logger.LogError(ex,
                             "ExecuteTaskByCefClientAsync uv failed. taskId={TaskId}, uv={Uv}, consumer={ConsumerId}",
                             ctx.TaskId, uvIndex + 1, consumerId);
@@ -583,9 +616,22 @@ namespace MainClient
                     completedUvTcs.TrySetResult(true);
 
                 using var completeReg = innerToken.Register(() => completedUvTcs.TrySetCanceled(innerToken));
-                await completedUvTcs.Task;
+                try
+                {
+                    await completedUvTcs.Task;
+                }
+                catch (Exception ex) when (Volatile.Read(ref cefClientDisconnected) == 1 || IsCefClientDisconnected(ex))
+                {
+                    _logger.LogWarning(ex, "CefClient disconnected while waiting completion. taskId={TaskId}", ctx.TaskId);
+                    return false;
+                }
 
                 return stopRemainingUvByResult;
+            }
+            catch (Exception ex) when (Volatile.Read(ref cefClientDisconnected) == 1 || IsCefClientDisconnected(ex))
+            {
+                _logger.LogWarning(ex, "CefClient disconnected, stop current task and continue next. taskId={TaskId}", ctx.TaskId);
+                return false;
             }
             finally
             {
@@ -641,6 +687,20 @@ namespace MainClient
             // 例如 result.Data 里回了 stopRemainingUv = true
             var stop = result.Data?["stopRemainingUv"]?.GetValue<bool?>() ?? false;
             return stop;
+        }
+
+        private static bool IsCefClientDisconnected(Exception ex)
+        {
+            if (ex is IOException)
+                return true;
+
+            var msg = ex.Message ?? string.Empty;
+            return msg.Contains("CefClient 管道断开", StringComparison.OrdinalIgnoreCase)
+                   || msg.Contains("管道尚未建立", StringComparison.OrdinalIgnoreCase)
+                   || msg.Contains("Pipe is broken", StringComparison.OrdinalIgnoreCase)
+                   || msg.Contains("pipe has been ended", StringComparison.OrdinalIgnoreCase)
+                   || msg.Contains("pipe disconnected", StringComparison.OrdinalIgnoreCase)
+                   || msg.Contains("process exited", StringComparison.OrdinalIgnoreCase);
         }
 
 
