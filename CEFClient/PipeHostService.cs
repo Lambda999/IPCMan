@@ -138,6 +138,12 @@ public sealed class PipeHostService : IAsyncDisposable
         var payload = req.Payload ?? _taskPayload;
         await SendLogAsync($"RunBrowserAsync start. browserId={browserId}", token);
 
+        if (_runTasks.ContainsKey(browserId))
+        {
+            await SendLogAsync($"RunBrowserAsync skipped duplicated browserId={browserId}", token);
+            return;
+        }
+
         var runTask = Task.Run(async () =>
         {
             BrowserRunResult result;
@@ -209,8 +215,20 @@ public sealed class PipeHostService : IAsyncDisposable
             await SendLogAsync($"browserResult sent. browserId={browserId}, success={result.Success}", CancellationToken.None);
         }, CancellationToken.None);
 
-        _runTasks.AddOrUpdate(browserId, runTask, (_, __) => runTask);
-        _ = runTask.ContinueWith(_ => _runTasks.TryRemove(browserId, out _), CancellationToken.None);
+        if (!_runTasks.TryAdd(browserId, runTask))
+        {
+            await SendLogAsync($"RunBrowserAsync TryAdd failed, duplicated browserId={browserId}", token);
+            return;
+        }
+
+        try
+        {
+            await runTask;
+        }
+        finally
+        {
+            _runTasks.TryRemove(browserId, out _);
+        }
     }
 
     private async Task HandleRemoveBrowserAsync(PipeEnvelope req, CancellationToken token)
