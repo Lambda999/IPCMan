@@ -63,6 +63,13 @@ namespace CefClient
                 LogLifecycle($"Use self-host subprocess path: {settings.BrowserSubprocessPath}");
             }
 
+            var rootCachePath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "CefSharp");
+            Directory.CreateDirectory(rootCachePath);
+            settings.RootCachePath = rootCachePath;
+            LogLifecycle($"Set RootCachePath={settings.RootCachePath}");
+
             settings.CefCommandLineArgs.Add("enable-media-stream");
             settings.CefCommandLineArgs.Add("use-fake-ui-for-media-stream");
             settings.CefCommandLineArgs.Add("enable-usermedia-screen-capturing");
@@ -105,6 +112,11 @@ namespace CefClient
             mainForm.FormClosed += (_, _) =>
             {
                 LogLifecycle("MainForm closed.");
+            };
+
+            Application.ThreadExit += (sender, e) =>
+            {
+                LogLifecycle("Application.ThreadExit fired.");
             };
 
             Application.ApplicationExit += (sender, e) =>

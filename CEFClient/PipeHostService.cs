@@ -382,7 +382,7 @@ public sealed class PipeHostService : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         try { _cts.Cancel(); } catch { }
-        try { await WaitRunTasksAsync(TimeSpan.FromSeconds(3)); } catch { }
+        try { await WaitRunTasksAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false); } catch { }
 
         _reader?.Dispose();
         _writer?.Dispose();
@@ -407,9 +407,9 @@ public sealed class PipeHostService : IAsyncDisposable
         try
         {
             var all = Task.WhenAll(tasks);
-            var finished = await Task.WhenAny(all, Task.Delay(timeout));
+            var finished = await Task.WhenAny(all, Task.Delay(timeout)).ConfigureAwait(false);
             if (finished == all)
-                await all;
+                await all.ConfigureAwait(false);
         }
         catch
         {

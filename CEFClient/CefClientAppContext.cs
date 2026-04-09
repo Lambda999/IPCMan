@@ -127,7 +127,7 @@
 
                     try
                     {
-                        _pipeHost.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                        _pipeHost.DisposeAsync().AsTask().ConfigureAwait(false).GetAwaiter().GetResult();
                     }
                     catch
                     {
