@@ -1,4 +1,4 @@
-﻿using System.IO.Pipes;
+using System.IO.Pipes;
 using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
@@ -7,6 +7,8 @@ namespace CefClient;
 
 public sealed class PipeHostService : IAsyncDisposable
 {
+    public event Action? PipeDisconnected;
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
@@ -24,6 +26,7 @@ public sealed class PipeHostService : IAsyncDisposable
 
     private string? _taskId;
     private System.Text.Json.Nodes.JsonNode? _taskPayload;
+    private int _disconnectNotified;
 
     public PipeHostService(string pipeName, MainForm mainForm)
     {
@@ -60,9 +63,27 @@ public sealed class PipeHostService : IAsyncDisposable
 
         while (!token.IsCancellationRequested)
         {
-            var line = await _reader.ReadLineAsync();
-            if (line == null)
+            string? line;
+            try
+            {
+                line = await _reader.ReadLineAsync();
+            }
+            catch (IOException)
+            {
+                NotifyPipeDisconnected();
                 break;
+            }
+            catch (ObjectDisposedException)
+            {
+                NotifyPipeDisconnected();
+                break;
+            }
+
+            if (line == null)
+            {
+                NotifyPipeDisconnected();
+                break;
+            }
 
             PipeEnvelope? req;
             try
@@ -190,6 +211,21 @@ public sealed class PipeHostService : IAsyncDisposable
                     cancellationToken: CancellationToken.None,
                     data: result.Data);
             }
+            catch (ObjectDisposedException)
+                when (_cts.IsCancellationRequested || token.IsCancellationRequested || _mainForm.IsDisposed)
+            {
+                var dataObj = result.Data as System.Text.Json.Nodes.JsonObject ?? new System.Text.Json.Nodes.JsonObject();
+                dataObj["removedByCefClient"] = true;
+                dataObj["removeSkippedDueToShutdown"] = true;
+                result.Data = dataObj;
+                await SendBrowserStatusAsync(
+                    browserId,
+                    stage: "removed",
+                    success: true,
+                    message: "browser removed during shutdown",
+                    cancellationToken: CancellationToken.None,
+                    data: result.Data);
+            }
             catch (Exception ex)
             {
                 var dataObj = result.Data as System.Text.Json.Nodes.JsonObject ?? new System.Text.Json.Nodes.JsonObject();
@@ -256,6 +292,25 @@ public sealed class PipeHostService : IAsyncDisposable
                 message: "browser removed by main command",
                 cancellationToken: token);
         }
+        catch (ObjectDisposedException) when (_cts.IsCancellationRequested || token.IsCancellationRequested || _mainForm.IsDisposed)
+        {
+            await SendLogAsync($"RemoveBrowserFastAsync skipped due to shutdown. browserId={req.BrowserId}", token);
+            await SendAsync(new PipeEnvelope
+            {
+                Type = "browserRemoved",
+                TaskId = _taskId,
+                BrowserId = req.BrowserId,
+                Success = true,
+                Message = "removed during shutdown"
+            }, token);
+
+            await SendBrowserStatusAsync(
+                req.BrowserId,
+                stage: "removed",
+                success: true,
+                message: "browser removed during shutdown",
+                cancellationToken: token);
+        }
         catch (Exception ex)
         {
             await SendLogAsync($"RemoveBrowserFastAsync failed. browserId={req.BrowserId}, msg={ex.Message}", token);
@@ -320,16 +375,48 @@ public sealed class PipeHostService : IAsyncDisposable
         {
             await _writer.WriteLineAsync(json);
         }
+        catch (IOException)
+        {
+            NotifyPipeDisconnected();
+            throw;
+        }
+        catch (ObjectDisposedException)
+        {
+            NotifyPipeDisconnected();
+            throw;
+        }
         finally
         {
             _writeLock.Release();
         }
     }
 
+    private void NotifyPipeDisconnected()
+    {
+        if (Interlocked.Exchange(ref _disconnectNotified, 1) != 0)
+            return;
+
+        try
+        {
+            _cts.Cancel();
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            PipeDisconnected?.Invoke();
+        }
+        catch
+        {
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         try { _cts.Cancel(); } catch { }
-        try { await WaitRunTasksAsync(TimeSpan.FromSeconds(3)); } catch { }
+        try { await WaitRunTasksAsync(TimeSpan.FromMilliseconds(500)).ConfigureAwait(false); } catch { }
 
         _reader?.Dispose();
         _writer?.Dispose();
@@ -354,9 +441,9 @@ public sealed class PipeHostService : IAsyncDisposable
         try
         {
             var all = Task.WhenAll(tasks);
-            var finished = await Task.WhenAny(all, Task.Delay(timeout));
+            var finished = await Task.WhenAny(all, Task.Delay(timeout)).ConfigureAwait(false);
             if (finished == all)
-                await all;
+                await all.ConfigureAwait(false);
         }
         catch
         {

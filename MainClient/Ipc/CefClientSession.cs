@@ -1,4 +1,4 @@
-﻿
+
 
 namespace MainClient.Ipc
 {
@@ -34,6 +34,7 @@ namespace MainClient.Ipc
 
         private readonly ConcurrentDictionary<string, TaskCompletionSource<PipeEnvelope>> _pending =
             new(StringComparer.OrdinalIgnoreCase);
+        private int _disconnectedNotified;
 
         public Process? Process { get; private set; }
         public string PipeName => _pipeName;
@@ -41,6 +42,7 @@ namespace MainClient.Ipc
         public event Func<string, Task>? OnLog;
         public event Func<PipeEnvelope, Task>? OnBrowserResult;
         public event Func<PipeEnvelope, Task>? OnBrowserStatus;
+        public event Func<string, Task>? OnDisconnected;
 
         public CefClientSession(
             string exePath,
@@ -82,6 +84,7 @@ namespace MainClient.Ipc
                 throw new InvalidOperationException("启动 CefClient.exe 失败");
 
             Process = process;
+            process.Exited += (_, _) => NotifyDisconnected(new IOException($"CefClient 进程已退出，ExitCode={process.ExitCode}"), "CefClient process exited");
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(
                 cancellationToken, _disposeCts.Token);
@@ -251,6 +254,16 @@ namespace MainClient.Ipc
             {
                 await _writer.WriteLineAsync(json);
             }
+            catch (IOException ex)
+            {
+                NotifyDisconnected(ex, "SendAsync failed: pipe disconnected");
+                throw;
+            }
+            catch (ObjectDisposedException ex)
+            {
+                NotifyDisconnected(ex, "SendAsync failed: pipe disposed");
+                throw;
+            }
             finally
             {
                 _writeLock.Release();
@@ -263,9 +276,27 @@ namespace MainClient.Ipc
             {
                 while (!cancellationToken.IsCancellationRequested && _reader != null)
                 {
-                    var line = await _reader.ReadLineAsync();
-                    if (line == null)
+                    string? line;
+                    try
+                    {
+                        line = await _reader.ReadLineAsync();
+                    }
+                    catch (IOException ex)
+                    {
+                        NotifyDisconnected(ex, "ReadLoop read failed: pipe disconnected");
                         break;
+                    }
+                    catch (ObjectDisposedException ex)
+                    {
+                        NotifyDisconnected(ex, "ReadLoop read failed: pipe disposed");
+                        break;
+                    }
+
+                    if (line == null)
+                    {
+                        NotifyDisconnected(null, "CefClient 管道断开");
+                        break;
+                    }
 
                     PipeEnvelope? msg;
                     try
@@ -333,21 +364,44 @@ namespace MainClient.Ipc
             }
             catch (Exception ex)
             {
-                _readyTcs.TrySetException(ex);
-
-                foreach (var kv in _pending)
-                {
-                    kv.Value.TrySetException(ex);
-                }
+                NotifyDisconnected(ex, "ReadLoop failed");
             }
             finally
             {
-                if (!_readyTcs.Task.IsCompleted)
-                    _readyTcs.TrySetException(new IOException("CefClient 管道断开"));
+                NotifyDisconnected(null, "CefClient 管道断开");
+            }
+        }
 
-                foreach (var kv in _pending)
+        private void NotifyDisconnected(Exception? exception, string reason)
+        {
+            if (Interlocked.Exchange(ref _disconnectedNotified, 1) != 0)
+                return;
+
+            var ex = exception ?? new IOException(reason);
+
+            if (!_readyTcs.Task.IsCompleted)
+                _readyTcs.TrySetException(ex);
+
+            foreach (var kv in _pending)
+            {
+                kv.Value.TrySetException(ex);
+            }
+
+            if (OnDisconnected != null)
+            {
+                foreach (var h in OnDisconnected.GetInvocationList())
                 {
-                    kv.Value.TrySetException(new IOException("CefClient 管道断开"));
+                    var handler = (Func<string, Task>)h;
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await handler(reason);
+                        }
+                        catch
+                        {
+                        }
+                    });
                 }
             }
         }
