@@ -5,27 +5,6 @@ namespace CefClient.Viewport
     using System;
     using System.Linq;
 
-    public sealed class DeviceProfileResult
-    {
-        public int PhysicalWidth { get; set; }
-        public int PhysicalHeight { get; set; }
-
-        public int CssWidth { get; set; }
-        public int CssHeight { get; set; }
-
-        public float DeviceScaleFactor { get; set; }
-
-        public double DprX { get; set; }
-        public double DprY { get; set; }
-
-        public double Score { get; set; }
-
-        public override string ToString()
-        {
-            return $"Physical={PhysicalWidth}x{PhysicalHeight}, CSS={CssWidth}x{CssHeight}, DPR={DeviceScaleFactor:F3}, Score={Score:F6}";
-        }
-    }
-
     public static class AndroidViewportMatcher
     {
         // 主流国内安卓 CSS 档位

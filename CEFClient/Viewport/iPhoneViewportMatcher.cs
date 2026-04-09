@@ -3,26 +3,7 @@
     using System;
     using System.Linq;
 
-    public sealed class iPhoneDeviceProfileResult
-    {
-        public int PhysicalWidth { get; set; }
-        public int PhysicalHeight { get; set; }
-
-        public int CssWidth { get; set; }
-        public int CssHeight { get; set; }
-
-        public float DeviceScaleFactor { get; set; }
-
-        public double DprX { get; set; }
-        public double DprY { get; set; }
-
-        public double Score { get; set; }
-
-        public override string ToString()
-        {
-            return $"Physical={PhysicalWidth}x{PhysicalHeight}, CSS={CssWidth}x{CssHeight}, DPR={DeviceScaleFactor:F3}, Score={Score:F6}";
-        }
-    }
+ 
 
     public static class iPhoneViewportMatcher
     {
@@ -65,7 +46,7 @@
             3.0f
         };
 
-        public static iPhoneDeviceProfileResult Match(int width, int height)
+        public static DeviceProfileResult Match(int width, int height)
         {
             if (width <= 0 || height <= 0)
                 throw new ArgumentOutOfRangeException("分辨率必须大于 0");
@@ -74,7 +55,7 @@
             int physicalWidth = Math.Min(width, height);
             int physicalHeight = Math.Max(width, height);
 
-            iPhoneDeviceProfileResult? best = null;
+            DeviceProfileResult? best = null;
 
             foreach (var p in Profiles)
             {
@@ -100,7 +81,7 @@
                 double cssRatio = (double)p.CssH / p.CssW;
                 score += Math.Abs(physicalRatio - cssRatio) * 0.1;
 
-                var result = new iPhoneDeviceProfileResult
+                var result = new DeviceProfileResult
                 {
                     PhysicalWidth = physicalWidth,
                     PhysicalHeight = physicalHeight,
@@ -123,7 +104,7 @@
                 dpr = NormalizeDpr(dpr);
                 int cssHeight = (int)Math.Round(physicalHeight / dpr);
 
-                return new iPhoneDeviceProfileResult
+                return new DeviceProfileResult
                 {
                     PhysicalWidth = physicalWidth,
                     PhysicalHeight = physicalHeight,

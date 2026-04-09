@@ -42,7 +42,7 @@ namespace CefClient
         }
 
 
-        public async Task<bool> CreateBrowserAsync(string browserId, System.Text.Json.Nodes.JsonNode? payload, CancellationToken cancellationToken = default)
+        public async Task<bool> CreateBrowserAsyncv2(string browserId, System.Text.Json.Nodes.JsonNode? payload, CancellationToken cancellationToken = default)
         {
             if (_slots.ContainsKey(browserId))
             {
@@ -51,7 +51,7 @@ namespace CefClient
             }
 
             LogInfo($"CreateBrowserAsync started. browserId={browserId},payload={payload?.ToString()}");
- 
+
 
             var slot = await UiInvokeAsync(() =>
             {
@@ -80,17 +80,14 @@ namespace CefClient
                     BorderStyle = BorderStyle.None
                 };
 
-                //var sw = payload?["dev"]?["sw"]?.GetValue<int>() ?? 1080;
-                //var sh = payload?["dev"]?["sh"]?.GetValue<int>() ?? 1920;
+                var sw = payload?["dev"]?["sw"]?.GetValue<int>() ?? 1080;
+                var sh = payload?["dev"]?["sh"]?.GetValue<int>() ?? 1920;
 
-                //var profileResult = AndroidViewportMatcher.Match(sw, sh);
-                //var deviceScale = profileResult.DeviceScaleFactor;
-                //int cssWidth = profileResult.CssWidth;
-                //int cssHeight = profileResult.CssHeight;
-                //panel.Width = cssWidth + 5;
-                //panel.Height = cssHeight + 5;
-                int cssWidth = 420;
-                int cssHeight = 920;
+                var profileResult = AndroidViewportMatcher.Match(sw, sh);
+                var deviceScale = profileResult.DeviceScaleFactor;
+                int cssWidth = profileResult.CssWidth;
+                int cssHeight = profileResult.CssHeight;
+
 
 
                 var browser = new ChromiumWebBrowser("about:blank", requestContext)
@@ -100,62 +97,35 @@ namespace CefClient
                     Size = new Size(cssWidth, cssHeight)
                 };
                 var ua = payload?["dev"]?["ua"]?.ToString();
-                //var os = payload?["os"]?.GetValue<int>() ?? 1;
-                this.Text = ua;
-
-                //var proxy_server = _args["proxy_server"].ToString();
+                var os = payload?["os"]?.GetValue<int>() ?? 1;
+                this.Text = os.ToString();
 
 
-                //browser.RenderProcessMessageHandler = new RenderProcessMessageHandler(sw, sh, ua, os);
-                //browser.LifeSpanHandler = new CfxLifeSpanHandler();
-                //browser.JsDialogHandler = new CfxJsDialogHandler();
+
                 browser.IsBrowserInitializedChanged += (s, args) =>
                 {
-                    #region 代理设置
-                    //user:password@ip:port
-                    //if (Convert.ToBoolean(this._args["IsProxyMode"].ToString()) && !string.IsNullOrEmpty(proxy_server))
-                    //{
-                    //    var context = browser.GetBrowser().GetHost().RequestContext;
-                    //    var v = new Dictionary<string, object>();
-                    //    v["mode"] = "fixed_servers";
-                    //    v["server"] = proxy_server;
-                    //    bool success = context.SetPreference("proxy", v, out string error);
-                    //}
-                    #endregion
+                    Task.Run(async () =>
+                    {
 
-                    //Task.Run(async () =>
-                    //{
+                        using (DevToolsClient DTC = browser.GetBrowser().GetDevToolsClient())
+                        {
+                            if (new int[] { 1, 2 }.Contains(os))
+                            {
 
-                    //    using (DevToolsClient DTC = browser.GetBrowser().GetDevToolsClient())
-                    //    {
-                    //        if (new int[] { 1, 2 }.Contains(os))
-                    //        {
+                                await DTC.Emulation.SetScrollbarsHiddenAsync(true);
+                                await DTC.Emulation.SetUserAgentOverrideAsync(userAgent: ua, platform: (os == 1 ? "Android" : "iPhone"));
+                                await DTC.Emulation.SetDeviceMetricsOverrideAsync(
+                                    width: cssWidth,
+                                    height: cssHeight,
+                                    deviceScaleFactor: deviceScale,
+                                    mobile: true, scale: 1.0, screenWidth: sw, screenHeight: sh);
+                                //await DTC.Emulation.SetAutoDarkModeOverrideAsync(true);
+                                await DTC.Emulation.SetTouchEmulationEnabledAsync(true, 5);
 
-                    //            await DTC.Emulation.SetScrollbarsHiddenAsync(true);
-                    //            await DTC.Emulation.SetDeviceMetricsOverrideAsync(
-                    //                width: cssWidth,
-                    //                height: cssHeight,
-                    //                deviceScaleFactor: deviceScale,
-                    //                mobile: true, scale: 1.0, screenWidth: sw, screenHeight: sh);
-                    //            await DTC.Emulation.SetUserAgentOverrideAsync(userAgent: ua, platform: (os == 1 ? "Android" : "iPhone"));
-
-                    //            ///await DTC.Emulation.SetAutoDarkModeOverrideAsync(true);
-                    //            //await DTC.Emulation.SetTouchEmulationEnabledAsync(true, 10);
-                    //            //await DTC.Emulation.SetDeviceMetricsOverrideAsync(0, 0, 2.0, true);
-                    //        }
-                    //        else
-                    //        {
-                    //            //await DTC.Emulation.SetUserAgentOverrideAsync(userAgent: ua);
-                    //        }
-                    //    }
-                    //});
+                            }
+                        }
+                    });
                 };
-
-
-
-
-
-
 
                 panel.Controls.Add(browser);
                 _hostPanel.Controls.Add(panel);
@@ -169,6 +139,209 @@ namespace CefClient
             LogInfo($"CreateBrowserAsync finished. browserId={browserId}, success={added}");
             return added;
         }
+
+
+
+        private async Task ConfigureMobileEmulationAsync(
+        ChromiumWebBrowser browser,
+        System.Text.Json.Nodes.JsonNode? payload,
+        DeviceProfileResult profileResult,
+        CancellationToken cancellationToken = default)
+        {
+
+
+            var ua = payload?["dev"]?["ua"]?.ToString() ?? string.Empty;
+            var os = payload?["os"]?.GetValue<int>() ?? 1;
+            var sw = payload?["dev"]?["sw"]?.GetValue<int>() ?? 1080;
+            var sh = payload?["dev"]?["sh"]?.GetValue<int>() ?? 1920;
+
+            string platform;
+            if (os == 2)
+            {
+                platform = "iPhone";
+            }
+            else
+            {
+                platform = "Android";
+            }
+
+            var deviceScale = profileResult.DeviceScaleFactor;
+            int cssWidth = profileResult.CssWidth;
+            int cssHeight = profileResult.CssHeight;
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (browser.IsDisposed || browser.Disposing)
+                throw new ObjectDisposedException(nameof(ChromiumWebBrowser));
+
+            var cefBrowser = browser.GetBrowser();
+            if (cefBrowser == null)
+                throw new InvalidOperationException("CEF browser is not available.");
+
+            using var dtc = cefBrowser.GetDevToolsClient();
+
+            // 顺序上通常先 UA，再 metrics，再 touch
+            if (os == 1 || os == 2)
+            {
+                await dtc.Emulation.SetUserAgentOverrideAsync(
+                    userAgent: ua,
+                    platform: platform);
+
+                cancellationToken.ThrowIfCancellationRequested();
+
+                await dtc.Emulation.SetDeviceMetricsOverrideAsync(
+                    width: cssWidth,
+                    height: cssHeight,
+                    deviceScaleFactor: deviceScale,
+                    mobile: true,
+                    scale: 1.0,
+                    // 这里用逻辑尺寸更稳，不直接塞物理像素
+                    screenWidth: cssWidth,
+                    screenHeight: cssHeight);
+
+                cancellationToken.ThrowIfCancellationRequested();
+
+                await dtc.Emulation.SetTouchEmulationEnabledAsync(true, 5);
+
+                cancellationToken.ThrowIfCancellationRequested();
+
+                await dtc.Emulation.SetScrollbarsHiddenAsync(true);
+            }
+
+            LogInfo($"ConfigureMobileEmulationAsync done. css={cssWidth}x{cssHeight}, dpr={deviceScale}, os={os}, ua={ua}");
+        }
+
+
+        public async Task<bool> CreateBrowserAsync(
+        string browserId,
+        System.Text.Json.Nodes.JsonNode? payload,
+        CancellationToken cancellationToken = default)
+        {
+            if (_slots.ContainsKey(browserId))
+            {
+                LogInfo($"CreateBrowserAsync skipped, browser already exists. browserId={browserId}");
+                return true;
+            }
+
+            LogInfo($"CreateBrowserAsync started. browserId={browserId}, payload={payload?.ToJsonString()}");
+
+            BrowserSlot? slot = null;
+            ChromiumWebBrowser? browser = null;
+            var sw = payload?["dev"]?["sw"]?.GetValue<int>() ?? 1080;
+            var sh = payload?["dev"]?["sh"]?.GetValue<int>() ?? 1920;
+            var ua = payload?["dev"]?["ua"]?.ToString() ?? string.Empty;
+            var os = payload?["os"]?.GetValue<int>() ?? 1;
+            DeviceProfileResult profileResult;
+            // 1=Android, 2=iPhone
+            if (os == 2)
+            {
+                // 如果你已经有 IPhoneViewportMatcher，就用它
+                profileResult = iPhoneViewportMatcher.Match(sw, sh);
+            }
+            else
+            {
+                profileResult = AndroidViewportMatcher.Match(sw, sh);
+            }
+            var deviceScale = profileResult.DeviceScaleFactor;
+            int cssWidth = profileResult.CssWidth;
+            int cssHeight = profileResult.CssHeight;
+            try
+            {
+                slot = await UiInvokeAsync(() =>
+                {
+                    var cacheRoot = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                        "CefSharp",
+                        "TaskSlots",
+                        $"proc_{Environment.ProcessId}");
+
+                    Directory.CreateDirectory(cacheRoot);
+
+                    var cachePath = Path.Combine(cacheRoot, browserId);
+                    Directory.CreateDirectory(cachePath);
+
+                    var requestContext = new RequestContext(new RequestContextSettings
+                    {
+                        CachePath = cachePath,
+                        PersistSessionCookies = false,
+                    });
+
+                    var panel = new Panel
+                    {
+                        Width = 500,
+                        Height = 960,
+                        BorderStyle = BorderStyle.None
+                    };
+
+
+                    var createdBrowser = new ChromiumWebBrowser("about:blank", requestContext)
+                    {
+                        Dock = DockStyle.None,
+                        Location = new Point(0, 0),
+                        Size = new Size(cssWidth + 48, cssHeight)
+                    };
+
+                    panel.Controls.Add(createdBrowser);
+                    _hostPanel.Controls.Add(panel);
+                    _hostPanel.Controls.SetChildIndex(panel, 0);
+
+                    browser = createdBrowser;
+
+                    return new BrowserSlot(browserId, panel, createdBrowser, requestContext, _hostPanel);
+                }, cancellationToken);
+
+                browser = slot.Browser;
+
+                await browser.WaitForInitialLoadAsync();
+
+                browser.FrameLoadEnd += (a,b) =>
+                {
+                    if(b.Frame.IsMain)
+                    {
+                        browser.ShowDevTools();
+                    }
+
+
+                };
+                // 等浏览器真正初始化完成
+                //await WaitForBrowserInitializedAsync(browser, cancellationToken);
+
+                // 再做移动端模拟设置
+                await ConfigureMobileEmulationAsync(browser, payload, profileResult, cancellationToken);
+
+                var added = _slots.TryAdd(browserId, slot);
+                if (!added)
+                {
+                    LogInfo($"CreateBrowserAsync TryAdd failed, browser already exists. browserId={browserId}");
+                    //await SafeDisposeSlotAsync(slot);
+                    return false;
+                }
+
+                LogInfo($"CreateBrowserAsync finished. browserId={browserId}, success={added}");
+                return true;
+            }
+            catch (OperationCanceledException)
+            {
+                LogInfo($"CreateBrowserAsync canceled. browserId={browserId}");
+                if (slot != null)
+                {
+                    //await SafeDisposeSlotAsync(slot);
+                }
+                return false;
+            }
+            catch (Exception ex)
+            {
+                LogInfo($"CreateBrowserAsync failed. browserId={browserId}, ex={ex}");
+                if (slot != null)
+                {
+                    //await SafeDisposeSlotAsync(slot);
+                }
+                return false;
+            }
+        }
+
+
+
 
 
 
@@ -275,7 +448,7 @@ namespace CefClient
                 {
                     LogInfo($"UiInvokeAsync execute failed: {ex.Message}");
                     tcs.TrySetException(ex);
-                    
+
                 }
             }
 
