@@ -7,6 +7,7 @@ namespace CefClient
     {
         private static readonly object LifecycleLogLock = new();
         private static readonly string LifecycleLogPath = Path.Combine(AppContext.BaseDirectory, "cefclient.lifecycle.log");
+        private static int ApplicationExitHandled;
 
         private static void LogLifecycle(string message)
         {
@@ -121,6 +122,12 @@ namespace CefClient
 
             Application.ApplicationExit += (sender, e) =>
             {
+                if (Interlocked.Exchange(ref ApplicationExitHandled, 1) != 0)
+                {
+                    LogLifecycle("ApplicationExit duplicate invocation ignored.");
+                    return;
+                }
+
                 LogLifecycle($"ApplicationExit entered. Cef.IsInitialized={Cef.IsInitialized}");
                 try
                 {

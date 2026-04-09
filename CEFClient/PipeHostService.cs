@@ -382,7 +382,7 @@ public sealed class PipeHostService : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         try { _cts.Cancel(); } catch { }
-        try { await WaitRunTasksAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false); } catch { }
+        try { await WaitRunTasksAsync(TimeSpan.FromMilliseconds(500)).ConfigureAwait(false); } catch { }
 
         _reader?.Dispose();
         _writer?.Dispose();
