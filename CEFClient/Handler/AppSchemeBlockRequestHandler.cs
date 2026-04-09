@@ -1,87 +1,38 @@
 using CefSharp;
-using CefSharp.WinForms;
+using CefSharp.Handler;
 
-namespace CefClient;
+namespace CefClient.Handler;
 
-public static class CefHelper
+public sealed class AppSchemeBlockRequestHandler : RequestHandler
 {
-    public static Task<bool> LoadUrlAndWaitAsync(
-        ChromiumWebBrowser browser,
-        string url,
-        TimeSpan timeout,
-        CancellationToken cancellationToken = default)
+    protected override bool OnBeforeBrowse(
+        IWebBrowser chromiumWebBrowser,
+        IBrowser browser,
+        IFrame frame,
+        IRequest request,
+        bool userGesture,
+        bool isRedirect)
     {
-        if (!TryNormalizeToAllowedUrl(url, out var firstUrl))
-            return Task.FromResult(false);
+        if (!frame.IsMain)
+            return base.OnBeforeBrowse(chromiumWebBrowser, browser, frame, request, userGesture, isRedirect);
 
-        var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var url = request.Url;
+        if (string.IsNullOrWhiteSpace(url))
+            return base.OnBeforeBrowse(chromiumWebBrowser, browser, frame, request, userGesture, isRedirect);
 
-        EventHandler<LoadingStateChangedEventArgs>? loadingHandler = null;
-        EventHandler<LoadErrorEventArgs>? loadErrorHandler = null;
-        CancellationTokenSource? timeoutCts = null;
-        CancellationTokenRegistration reg = default;
-        var recoveredFromUnknownScheme = false;
-
-        void Cleanup()
+        if (TryNormalizeToAllowedUrl(url, out var normalizedUrl))
         {
-            if (loadingHandler != null)
-                browser.LoadingStateChanged -= loadingHandler;
+            if (!string.Equals(normalizedUrl, url, StringComparison.OrdinalIgnoreCase))
+            {
+                chromiumWebBrowser.Load(normalizedUrl);
+                return true;
+            }
 
-            if (loadErrorHandler != null)
-                browser.LoadError -= loadErrorHandler;
-
-            reg.Dispose();
-            timeoutCts?.Dispose();
+            return base.OnBeforeBrowse(chromiumWebBrowser, browser, frame, request, userGesture, isRedirect);
         }
 
-        loadingHandler = (s, e) =>
-        {
-            if (!e.IsLoading)
-            {
-                Cleanup();
-                tcs.TrySetResult(true);
-            }
-        };
-
-        loadErrorHandler = (s, e) =>
-        {
-            // 只关心主框架失败
-            if (!e.Frame.IsMain)
-                return;
-
-            if (!recoveredFromUnknownScheme
-                && TryNormalizeToAllowedUrl(e.FailedUrl, out var fallbackUrl)
-                && !string.Equals(fallbackUrl, e.FailedUrl, StringComparison.OrdinalIgnoreCase))
-            {
-                recoveredFromUnknownScheme = true;
-                browser.Load(fallbackUrl);
-                return;
-            }
-
-            Cleanup();
-            tcs.TrySetResult(false);
-        };
-
-        browser.LoadingStateChanged += loadingHandler;
-        browser.LoadError += loadErrorHandler;
-
-        timeoutCts = new CancellationTokenSource(timeout);
-        timeoutCts.Token.Register(() =>
-        {
-            Cleanup();
-            tcs.TrySetResult(false);
-        });
-
-        reg = cancellationToken.Register(() =>
-        {
-            Cleanup();
-            tcs.TrySetCanceled(cancellationToken);
-        });
-
-        // 关键：订阅完事件后再导航，避免错过事件
-        browser.Load(firstUrl);
-
-        return tcs.Task;
+        // 阻止拉起外部 App 协议，避免出现 unknown scheme 错误页
+        return true;
     }
 
     private static bool TryNormalizeToAllowedUrl(string? candidate, out string normalizedUrl)
