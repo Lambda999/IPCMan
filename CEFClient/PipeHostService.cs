@@ -1,4 +1,4 @@
-﻿using System.IO.Pipes;
+using System.IO.Pipes;
 using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
@@ -7,6 +7,8 @@ namespace CefClient;
 
 public sealed class PipeHostService : IAsyncDisposable
 {
+    public event Action? PipeDisconnected;
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
@@ -24,6 +26,7 @@ public sealed class PipeHostService : IAsyncDisposable
 
     private string? _taskId;
     private System.Text.Json.Nodes.JsonNode? _taskPayload;
+    private int _disconnectNotified;
 
     public PipeHostService(string pipeName, MainForm mainForm)
     {
@@ -60,9 +63,27 @@ public sealed class PipeHostService : IAsyncDisposable
 
         while (!token.IsCancellationRequested)
         {
-            var line = await _reader.ReadLineAsync();
-            if (line == null)
+            string? line;
+            try
+            {
+                line = await _reader.ReadLineAsync();
+            }
+            catch (IOException)
+            {
+                NotifyPipeDisconnected();
                 break;
+            }
+            catch (ObjectDisposedException)
+            {
+                NotifyPipeDisconnected();
+                break;
+            }
+
+            if (line == null)
+            {
+                NotifyPipeDisconnected();
+                break;
+            }
 
             PipeEnvelope? req;
             try
@@ -320,9 +341,41 @@ public sealed class PipeHostService : IAsyncDisposable
         {
             await _writer.WriteLineAsync(json);
         }
+        catch (IOException)
+        {
+            NotifyPipeDisconnected();
+            throw;
+        }
+        catch (ObjectDisposedException)
+        {
+            NotifyPipeDisconnected();
+            throw;
+        }
         finally
         {
             _writeLock.Release();
+        }
+    }
+
+    private void NotifyPipeDisconnected()
+    {
+        if (Interlocked.Exchange(ref _disconnectNotified, 1) != 0)
+            return;
+
+        try
+        {
+            _cts.Cancel();
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            PipeDisconnected?.Invoke();
+        }
+        catch
+        {
         }
     }
 
