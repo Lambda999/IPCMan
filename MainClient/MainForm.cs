@@ -36,6 +36,10 @@ namespace MainClient
         private UiTaskRunner? _uiRunner;
         private AppAutoRestart? _appAutoRestart;
         private readonly TaskStatsAggregator _aggregator;
+        private readonly Channel<string> _cefCacheCleanupQueue = Channel.CreateUnbounded<string>();
+        private readonly ConcurrentDictionary<string, byte> _cefCacheCleanupPending = new(StringComparer.OrdinalIgnoreCase);
+        private readonly CancellationTokenSource _cefCacheCleanupCts = new();
+        private Task? _cefCacheCleanupWorker;
 
         #endregion
 
@@ -210,6 +214,8 @@ namespace MainClient
             this._logger = logger;
             this._httpClientFactory = httpClientFactory;
 
+            StartCefCacheCleanupWorker();
+
             LoadAppSetting();
             #region 数据初始化
             foreach (var item in new ManagementObjectSearcher("Select * from Win32_ComputerSystem").Get())
@@ -217,6 +223,18 @@ namespace MainClient
                 toolStripStatusLabel1.Text = $"CPU:{item["NumberOfLogicalProcessors"]}";
             }
             #endregion
+
+            this.FormClosing += (_, _) =>
+            {
+                try
+                {
+                    _cefCacheCleanupCts.Cancel();
+                    _cefCacheCleanupQueue.Writer.TryComplete();
+                }
+                catch
+                {
+                }
+            };
         }
 
 
@@ -711,67 +729,119 @@ namespace MainClient
 
         private void StartCleanupCefRootCacheAsync(int taskId, int? cefClientPid)
         {
-            _ = Task.Run(async () =>
+            try
+            {
+                var rootCachePath = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "CefSharp");
+                var taskSlotsPath = Path.Combine(rootCachePath, "TaskSlots");
+
+                if (!Directory.Exists(taskSlotsPath))
+                    return;
+
+                if (cefClientPid.HasValue)
+                {
+                    var processCachePath = Path.Combine(taskSlotsPath, $"proc_{cefClientPid.Value}");
+                    EnqueueCefCacheCleanup(processCachePath);
+                }
+
+                foreach (var dir in Directory.GetDirectories(taskSlotsPath, "proc_*"))
+                {
+                    var name = Path.GetFileName(dir);
+                    if (!name.StartsWith("proc_", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    if (!int.TryParse(name["proc_".Length..], out var pid))
+                        continue;
+
+                    if (IsProcessAlive(pid))
+                        continue;
+
+                    EnqueueCefCacheCleanup(dir);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Queue CefSharp root cache cleanup failed. taskId={TaskId}, pid={Pid}", taskId, cefClientPid);
+            }
+        }
+
+        private void StartCefCacheCleanupWorker()
+        {
+            _cefCacheCleanupWorker = Task.Run(async () =>
             {
                 try
                 {
-                    // 给子进程一点点时间释放句柄
-                    await Task.Delay(300);
-
-                    var rootCachePath = Path.Combine(
-                        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                        "CefSharp");
-                    var taskSlotsPath = Path.Combine(rootCachePath, "TaskSlots");
-
-                    if (!Directory.Exists(taskSlotsPath))
-                        return;
-
-                    if (cefClientPid.HasValue)
+                    var reader = _cefCacheCleanupQueue.Reader;
+                    while (await reader.WaitToReadAsync(_cefCacheCleanupCts.Token))
                     {
-                        var processCachePath = Path.Combine(taskSlotsPath, $"proc_{cefClientPid.Value}");
-                        TryDeleteDirectoryWithRetry(processCachePath);
-                    }
+                        while (reader.TryRead(out var path))
+                        {
+                            if (string.IsNullOrWhiteSpace(path))
+                                continue;
 
-                    // 顺带清理已退出进程遗留目录
-                    foreach (var dir in Directory.GetDirectories(taskSlotsPath, "proc_*"))
-                    {
-                        var name = Path.GetFileName(dir);
-                        if (!name.StartsWith("proc_", StringComparison.OrdinalIgnoreCase))
-                            continue;
+                            if (!Directory.Exists(path))
+                            {
+                                _cefCacheCleanupPending.TryRemove(path, out _);
+                                continue;
+                            }
 
-                        if (!int.TryParse(name["proc_".Length..], out var pid))
-                            continue;
+                            var deleted = TryDeleteDirectoryWithRetry(path);
+                            if (deleted)
+                            {
+                                _cefCacheCleanupPending.TryRemove(path, out _);
+                                continue;
+                            }
 
-                        if (IsProcessAlive(pid))
-                            continue;
-
-                        TryDeleteDirectoryWithRetry(dir);
+                            try
+                            {
+                                // 本次失败，稍后自动重试，避免漏处理
+                                await Task.Delay(1000, _cefCacheCleanupCts.Token);
+                                _cefCacheCleanupQueue.Writer.TryWrite(path);
+                            }
+                            catch (OperationCanceledException)
+                            {
+                                return;
+                            }
+                        }
                     }
                 }
-                catch (Exception ex)
+                catch (OperationCanceledException)
                 {
-                    _logger.LogDebug(ex, "Cleanup CefSharp root cache failed. taskId={TaskId}, pid={Pid}", taskId, cefClientPid);
                 }
-            });
+            }, _cefCacheCleanupCts.Token);
         }
 
-        private static void TryDeleteDirectoryWithRetry(string path, int retries = 3, int delayMs = 150)
+        private void EnqueueCefCacheCleanup(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return;
+
+            if (!_cefCacheCleanupPending.TryAdd(path, 0))
+                return;
+
+            _cefCacheCleanupQueue.Writer.TryWrite(path);
+        }
+
+        private static bool TryDeleteDirectoryWithRetry(string path, int retries = 3, int delayMs = 150)
         {
             if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
-                return;
+                return true;
 
             for (var i = 0; i < retries; i++)
             {
                 try
                 {
                     Directory.Delete(path, recursive: true);
-                    return;
+                    return true;
                 }
                 catch when (i < retries - 1)
                 {
                     Thread.Sleep(delayMs);
                 }
             }
+
+            return !Directory.Exists(path);
         }
 
         private static bool IsProcessAlive(int pid)
