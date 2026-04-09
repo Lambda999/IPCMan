@@ -38,8 +38,10 @@ namespace MainClient
         private readonly TaskStatsAggregator _aggregator;
         private readonly Channel<string> _cefCacheCleanupQueue = Channel.CreateUnbounded<string>();
         private readonly ConcurrentDictionary<string, byte> _cefCacheCleanupPending = new(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentDictionary<string, int> _cefCacheCleanupRetry = new(StringComparer.OrdinalIgnoreCase);
         private readonly CancellationTokenSource _cefCacheCleanupCts = new();
         private Task? _cefCacheCleanupWorker;
+        private Task? _cefCacheSweepWorker;
 
         #endregion
 
@@ -731,34 +733,13 @@ namespace MainClient
         {
             try
             {
-                var rootCachePath = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "CefSharp");
-                var taskSlotsPath = Path.Combine(rootCachePath, "TaskSlots");
-
-                if (!Directory.Exists(taskSlotsPath))
-                    return;
-
                 if (cefClientPid.HasValue)
                 {
-                    var processCachePath = Path.Combine(taskSlotsPath, $"proc_{cefClientPid.Value}");
+                    var processCachePath = Path.Combine(GetCefTaskSlotsPath(), $"proc_{cefClientPid.Value}");
                     EnqueueCefCacheCleanup(processCachePath);
                 }
 
-                foreach (var dir in Directory.GetDirectories(taskSlotsPath, "proc_*"))
-                {
-                    var name = Path.GetFileName(dir);
-                    if (!name.StartsWith("proc_", StringComparison.OrdinalIgnoreCase))
-                        continue;
-
-                    if (!int.TryParse(name["proc_".Length..], out var pid))
-                        continue;
-
-                    if (IsProcessAlive(pid))
-                        continue;
-
-                    EnqueueCefCacheCleanup(dir);
-                }
+                EnqueueStaleCefCacheDirs();
             }
             catch (Exception ex)
             {
@@ -790,13 +771,16 @@ namespace MainClient
                             if (deleted)
                             {
                                 _cefCacheCleanupPending.TryRemove(path, out _);
+                                _cefCacheCleanupRetry.TryRemove(path, out _);
                                 continue;
                             }
 
                             try
                             {
-                                // 本次失败，稍后自动重试，避免漏处理
-                                await Task.Delay(1000, _cefCacheCleanupCts.Token);
+                                // 本次失败，指数退避后自动重试，避免漏处理
+                                var retry = _cefCacheCleanupRetry.AddOrUpdate(path, 1, (_, old) => Math.Min(old + 1, 8));
+                                var delayMs = Math.Min(30000, (int)(500 * Math.Pow(2, retry - 1)));
+                                await Task.Delay(delayMs, _cefCacheCleanupCts.Token);
                                 _cefCacheCleanupQueue.Writer.TryWrite(path);
                             }
                             catch (OperationCanceledException)
@@ -804,6 +788,21 @@ namespace MainClient
                                 return;
                             }
                         }
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                }
+            }, _cefCacheCleanupCts.Token);
+
+            _cefCacheSweepWorker = Task.Run(async () =>
+            {
+                try
+                {
+                    while (!_cefCacheCleanupCts.IsCancellationRequested)
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(30), _cefCacheCleanupCts.Token);
+                        EnqueueStaleCefCacheDirs();
                     }
                 }
                 catch (OperationCanceledException)
@@ -820,7 +819,38 @@ namespace MainClient
             if (!_cefCacheCleanupPending.TryAdd(path, 0))
                 return;
 
+            _cefCacheCleanupRetry.TryAdd(path, 0);
             _cefCacheCleanupQueue.Writer.TryWrite(path);
+        }
+
+        private static string GetCefTaskSlotsPath()
+        {
+            var rootCachePath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "CefSharp");
+            return Path.Combine(rootCachePath, "TaskSlots");
+        }
+
+        private void EnqueueStaleCefCacheDirs()
+        {
+            var taskSlotsPath = GetCefTaskSlotsPath();
+            if (!Directory.Exists(taskSlotsPath))
+                return;
+
+            foreach (var dir in Directory.GetDirectories(taskSlotsPath, "proc_*"))
+            {
+                var name = Path.GetFileName(dir);
+                if (!name.StartsWith("proc_", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (!int.TryParse(name["proc_".Length..], out var pid))
+                    continue;
+
+                if (IsProcessAlive(pid))
+                    continue;
+
+                EnqueueCefCacheCleanup(dir);
+            }
         }
 
         private static bool TryDeleteDirectoryWithRetry(string path, int retries = 3, int delayMs = 150)
