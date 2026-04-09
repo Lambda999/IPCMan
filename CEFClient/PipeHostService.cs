@@ -103,6 +103,7 @@ public sealed class PipeHostService : IAsyncDisposable
                     break;
 
                 case "exit":
+                    await WaitRunTasksAsync(TimeSpan.FromSeconds(10));
                     await _mainForm.RemoveAllBrowsersAsync();
                     return;
             }
@@ -308,6 +309,7 @@ public sealed class PipeHostService : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         try { _cts.Cancel(); } catch { }
+        try { await WaitRunTasksAsync(TimeSpan.FromSeconds(3)); } catch { }
 
         _reader?.Dispose();
         _writer?.Dispose();
@@ -316,5 +318,28 @@ public sealed class PipeHostService : IAsyncDisposable
         _cts.Dispose();
 
         await Task.CompletedTask;
+    }
+
+    private async Task WaitRunTasksAsync(TimeSpan timeout)
+    {
+        var tasks = new List<Task>();
+        foreach (var task in _runTasks.Values)
+        {
+            tasks.Add(task);
+        }
+
+        if (tasks.Count == 0)
+            return;
+
+        try
+        {
+            var all = Task.WhenAll(tasks);
+            var finished = await Task.WhenAny(all, Task.Delay(timeout));
+            if (finished == all)
+                await all;
+        }
+        catch
+        {
+        }
     }
 }

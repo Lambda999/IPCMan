@@ -550,61 +550,58 @@ namespace MainClient
             int dispatchedUvCount = 0;
             int completedUvCount = 0;
             bool stopRemainingUvByResult = false;
+            var inFlightBrowsers = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
+            var uvRunTimeout = TimeSpan.FromSeconds(90);
 
-            session.OnBrowserResult += async response =>
+            void TryCompleteAll()
             {
-                if (!string.Equals(response.TaskId, ctx.UniqueId, StringComparison.OrdinalIgnoreCase))
+                if (Volatile.Read(ref dispatchedUvCount) <= 0)
                     return;
 
-                if (string.IsNullOrWhiteSpace(response.BrowserId))
-                    return;
+                if (Volatile.Read(ref completedUvCount) >= Volatile.Read(ref dispatchedUvCount))
+                    completedUvTcs.TrySetResult(true);
+            }
 
-                var uvNumber = Interlocked.Increment(ref completedUvCount);
-                _logger.LogInformation(
-                    "RunBrowserAsync done. taskId={TaskId}, uv={Uv}, browserId={BrowserId}, success={Success}, msg={Message}",
-                    ctx.TaskId,
-                    uvNumber,
-                    response.BrowserId,
-                    response.Success,
-                    response.Message);
-
-                var result = new BrowserRunResponse
-                {
-                    Success = response.Success ?? false,
-                    Message = response.Message ?? string.Empty,
-                    Data = response.Data
-                };
-
-                if (ShouldStopRemainingUv(ctx, result))
-                {
-                    stopRemainingUvByResult = true;
-                }
-
-                var removedByCefClient = response.Data?["removedByCefClient"]?.GetValue<bool?>() ?? false;
-                if (!removedByCefClient)
+            Task StartUvTimeoutWatchdogAsync(string browserId, CancellationToken watchdogToken)
+            {
+                return Task.Run(async () =>
                 {
                     try
                     {
-                        await session.RemoveBrowserAsync(ctx.UniqueId, response.BrowserId, CancellationToken.None);
+                        await Task.Delay(uvRunTimeout, watchdogToken);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        return;
+                    }
+
+                    if (!inFlightBrowsers.TryRemove(browserId, out _))
+                        return;
+
+                    var done = Interlocked.Increment(ref completedUvCount);
+                    _logger.LogWarning(
+                        "UV run timeout fallback. taskId={TaskId}, browserId={BrowserId}, timeout={TimeoutSeconds}s, completed={Completed}/{Dispatched}",
+                        ctx.TaskId,
+                        browserId,
+                        (int)uvRunTimeout.TotalSeconds,
+                        done,
+                        Volatile.Read(ref dispatchedUvCount));
+
+                    try
+                    {
+                        await session.RemoveBrowserAsync(ctx.UniqueId, browserId, CancellationToken.None);
                     }
                     catch (Exception ex)
                     {
                         _logger.LogDebug(ex,
-                            "RemoveBrowserAsync failed after browserResult. taskId={TaskId}, browserId={BrowserId}",
-                            ctx.TaskId, response.BrowserId);
+                            "Timeout fallback remove browser failed. taskId={TaskId}, browserId={BrowserId}",
+                            ctx.TaskId,
+                            browserId);
                     }
-                }
 
-                if (Volatile.Read(ref completedUvCount) >= Volatile.Read(ref dispatchedUvCount))
-                {
-                    completedUvTcs.TrySetResult(true);
-                }
-            };
-
-            var completedUvTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-            int dispatchedUvCount = 0;
-            int completedUvCount = 0;
-            bool stopRemainingUvByResult = false;
+                    TryCompleteAll();
+                }, CancellationToken.None);
+            }
 
             session.OnBrowserResult += async response =>
             {
@@ -613,6 +610,15 @@ namespace MainClient
 
                 if (string.IsNullOrWhiteSpace(response.BrowserId))
                     return;
+
+                if (!inFlightBrowsers.TryRemove(response.BrowserId, out _))
+                {
+                    _logger.LogDebug(
+                        "Ignore duplicated or late browserResult. taskId={TaskId}, browserId={BrowserId}",
+                        ctx.TaskId,
+                        response.BrowserId);
+                    return;
+                }
 
                 var uvNumber = Interlocked.Increment(ref completedUvCount);
                 _logger.LogInformation(
@@ -697,7 +703,9 @@ namespace MainClient
                             uvPayload,
                             innerToken);
 
+                        inFlightBrowsers.TryAdd(browserId, 0);
                         Interlocked.Increment(ref dispatchedUvCount);
+                        _ = StartUvTimeoutWatchdogAsync(browserId, innerToken);
 
                         if (uvIndex < ctx.TotalUV - 1)
                             await Task.Delay(uvIntervalMs, innerToken);
@@ -722,8 +730,7 @@ namespace MainClient
                 if (Volatile.Read(ref dispatchedUvCount) <= 0)
                     return false;
 
-                if (Volatile.Read(ref completedUvCount) >= Volatile.Read(ref dispatchedUvCount))
-                    completedUvTcs.TrySetResult(true);
+                TryCompleteAll();
 
                 using var completeReg = innerToken.Register(() => completedUvTcs.TrySetCanceled(innerToken));
                 await completedUvTcs.Task;
