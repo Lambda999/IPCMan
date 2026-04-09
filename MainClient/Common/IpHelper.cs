@@ -1,7 +1,7 @@
 ﻿using MainClient.Infrastructure;
 using Microsoft.Extensions.Logging;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
@@ -19,7 +19,7 @@ namespace MainClient.Common
     public class IpEntity
     {
         public string value { get; set; } = string.Empty;
-        public JToken json { get; set; }
+        public JsonNode json { get; set; }
         public IPFormat format { get; set; } = IPFormat.TXT;
     }
 
@@ -27,27 +27,27 @@ namespace MainClient.Common
 
     public class IpHelper
     {
-        private static JArray region_1;
-        private static JArray region_2;
-        private static JArray region_3;
-        private static JArray region_4_1;
-        private static JArray region_4_2;
-        private static JArray region_ipzan;
-        private static JArray region_51dail;
-        private static JArray region_shenlong;
+        private static JsonArray region_1;
+        private static JsonArray region_2;
+        private static JsonArray region_3;
+        private static JsonArray region_4_1;
+        private static JsonArray region_4_2;
+        private static JsonArray region_ipzan;
+        private static JsonArray region_51dail;
+        private static JsonArray region_shenlong;
 
         static string[] delimiters = { "\r", "\n", System.Environment.NewLine };
         static SemaphoreSlim _mutex = new SemaphoreSlim(1);
         static IpHelper()
         {
-            region_1 = (JArray)JsonConvert.DeserializeObject(Properties.Resources.region_1);
-            region_2 = (JArray)JsonConvert.DeserializeObject(Properties.Resources.region_2);
-            region_3 = (JArray)JsonConvert.DeserializeObject(Properties.Resources.region_3);
-            region_4_1 = (JArray)JsonConvert.DeserializeObject(Properties.Resources.region_4_1);
-            region_4_2 = (JArray)JsonConvert.DeserializeObject(Properties.Resources.region_4_2);
-            region_ipzan = (JArray)JsonConvert.DeserializeObject(Properties.Resources.region_ipzan);
-            region_51dail = (JArray)JsonConvert.DeserializeObject(Properties.Resources.region_51daili);
-            region_shenlong = (JArray)JsonConvert.DeserializeObject(Properties.Resources.region_shenlong);
+            region_1 = JsonNode.Parse(Properties.Resources.region_1)?.AsArray() ?? new JsonArray();
+            region_2 = JsonNode.Parse(Properties.Resources.region_2)?.AsArray() ?? new JsonArray();
+            region_3 = JsonNode.Parse(Properties.Resources.region_3)?.AsArray() ?? new JsonArray();
+            region_4_1 = JsonNode.Parse(Properties.Resources.region_4_1)?.AsArray() ?? new JsonArray();
+            region_4_2 = JsonNode.Parse(Properties.Resources.region_4_2)?.AsArray() ?? new JsonArray();
+            region_ipzan = JsonNode.Parse(Properties.Resources.region_ipzan)?.AsArray() ?? new JsonArray();
+            region_51dail = JsonNode.Parse(Properties.Resources.region_51daili)?.AsArray() ?? new JsonArray();
+            region_shenlong = JsonNode.Parse(Properties.Resources.region_shenlong)?.AsArray() ?? new JsonArray();
         }
         private readonly ILogger _logger;
         private readonly AppSettings _appSettings;
@@ -67,13 +67,13 @@ namespace MainClient.Common
                 var client = _httpClientFactory.CreateClient();
                 client.DefaultRequestHeaders.Clear();
                 client.DefaultRequestHeaders.TryAddWithoutValidation("Content-Type", "application/json; charset=utf-8");
-                var bidRequest = new JObject();
+                var bidRequest = new JsonObject();
                 bidRequest["id"] = taskid;
                 bidRequest["host"] = await CommonHelper.GetHostAsync();
                 bidRequest["agency"] = proxyIpUrl;// new Uri(proxyIpUrl).GetLeftPart(UriPartial.Authority);
                 //bidRequest["agency"] = new Uri(proxyIpUrl).GetLeftPart(UriPartial.Authority);
                 bidRequest["id"] = taskid;
-                var postData = JsonConvert.SerializeObject(bidRequest);
+                var postData = JsonSerializer.Serialize(bidRequest);
                 HttpContent content = new StringContent(postData);
                 content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
                 await client.PostAsync($"{baseUrl}/api/ip_stat.php?action=invoke&t={System.DateTime.Now.Ticks}", content);
@@ -92,12 +92,12 @@ namespace MainClient.Common
                 var client = _httpClientFactory.CreateClient();
                 client.DefaultRequestHeaders.Clear();
                 client.DefaultRequestHeaders.TryAddWithoutValidation("Content-Type", "application/json; charset=utf-8");
-                var bidRequest = new JObject();
+                var bidRequest = new JsonObject();
                 bidRequest["id"] = taskid;
                 bidRequest["host"] = await CommonHelper.GetHostAsync();
                 bidRequest["agency"] = proxyIpUrl;// new Uri(proxyIpUrl).GetLeftPart(UriPartial.Authority);
                 bidRequest["ip"] = realIp;
-                var postData = JsonConvert.SerializeObject(bidRequest);
+                var postData = JsonSerializer.Serialize(bidRequest);
                 HttpContent content = new StringContent(postData);
                 content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
                 await client.PostAsync($"{baseUrl}/api/ip_stat.php?action=reward&t={System.DateTime.Now.Ticks}", content);
@@ -110,7 +110,7 @@ namespace MainClient.Common
 
 
         private static ConcurrentQueue<IpEntity> ipQueues = new ConcurrentQueue<IpEntity>();
-        public async Task<IpEntity> GetProxyIpAsync(JToken task, int count = 0)
+        public async Task<IpEntity> GetProxyIpAsync(JsonNode task, int count = 0)
         {
             if (ipQueues.TryDequeue(out var value))
             {
@@ -139,7 +139,7 @@ namespace MainClient.Common
                         }
                         else if (iPFormat == IPFormat.JSON)
                         {
-                            var json = JObject.Parse(content);
+                            var json = JsonNode.Parse(content)?.AsObject();
                             if (url.Contains("service.ipzan.com"))
                             {
                                 foreach (var data in json.SelectToken("data.list").Children())
@@ -182,7 +182,7 @@ namespace MainClient.Common
 
 
 
-        private string GetIpUrl(JToken task, out IPFormat format, int count = 0)
+        private string GetIpUrl(JsonNode task, out IPFormat format, int count = 0)
         {
             format = IPFormat.TXT;
             var url = _appSettings.ProxyIpUrl.Trim();
@@ -324,7 +324,8 @@ namespace MainClient.Common
                                     var m2 = Regex.Match(address[1], @"\w+");
                                     if (m2.Success)
                                     {
-                                        var area_city = area_prov["mallCityList"].FirstOrDefault(w => w["cityName"].ToString().Contains(m2.Value));
+                                        var cityList = area_prov["mallCityList"] as JsonArray;
+                                        var area_city = cityList?.FirstOrDefault(w => w?["cityName"]?.ToString().Contains(m2.Value) == true);
                                         if (area_city != null)
                                         {
                                             if (Regex.IsMatch(url, @"regionCode=[\w]*[^&]?"))

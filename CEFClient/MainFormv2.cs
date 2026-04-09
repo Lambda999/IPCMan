@@ -1,8 +1,8 @@
 ﻿using CefClient.Common;
 using CefClient.Handler;
 using CefSharp;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Resolution;
 using System;
 using System.Collections.Generic;
@@ -112,10 +112,10 @@ namespace CefClient
 
         private async Task ResolveMessage(string value)
         {
-            var message = (JObject)JsonConvert.DeserializeObject(value);
+            var message = JsonNode.Parse(value)?.AsObject();
             if (message["Msg"].ToString().Equals("LOAD"))
             {
-                var args = (JObject)JsonConvert.DeserializeObject(message["Data"].ToString());
+                var args = JsonNode.Parse(message?["Data"]?.ToString() ?? "{}")?.AsObject() ?? new JsonObject();
                 //LogWriteLine(value);
                 this.BeginInvoke(new MethodInvoker(() =>
                 {
@@ -223,7 +223,7 @@ namespace CefClient
         private void SendRegMessage()
         {
             var currentProcess = Process.GetCurrentProcess();
-            var message = JsonConvert.SerializeObject(JObject.FromObject(new
+            var message = JsonSerializer.Serialize(new
             {
                 Msg = "REG",
                 WindowHandle = (int)this.Handle,
@@ -318,9 +318,9 @@ namespace CefClient
             Task.Factory.StartNew(async () =>
                 {
                     var content = await GetTask("6-test");
-                    var task = JObject.Parse(content)["task"][0];
-                    var dev = JObject.Parse((await GetDev()))["data"][0];
-                    var args = JObject.Parse(Properties.Resources.JS_ARGS);
+                    var task = JsonNode.Parse(content)?["task"]?[0];
+                    var dev = JsonNode.Parse((await GetDev()))?["data"]?[0];
+                    var args = JsonNode.Parse(Properties.Resources.JS_ARGS)?.AsObject() ?? new JsonObject();
                     args["task"] = task;
                     args["dev"] = dev;
                     args["url"] = task["url"];

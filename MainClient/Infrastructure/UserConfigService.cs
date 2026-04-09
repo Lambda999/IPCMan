@@ -1,4 +1,4 @@
-﻿using Newtonsoft.Json;
+﻿using System.Text.Json;
 
 
 namespace MainClient.Infrastructure
@@ -39,7 +39,7 @@ namespace MainClient.Infrastructure
             {
                 try
                 {
-                    root = JsonConvert.DeserializeObject<Dictionary<string, object>>(File.ReadAllText(FilePath)) ?? new();
+                    root = JsonSerializer.Deserialize<Dictionary<string, object>>(File.ReadAllText(FilePath)) ?? new();
                 }
                 catch
                 {
@@ -51,7 +51,7 @@ namespace MainClient.Infrastructure
                 root = new();
             }
             root[sectionName] = value;
-            File.WriteAllText(FilePath, JsonConvert.SerializeObject(root, Formatting.Indented));
+            File.WriteAllText(FilePath, JsonSerializer.Serialize(root, new JsonSerializerOptions { WriteIndented = true }));
         }
     }
 
