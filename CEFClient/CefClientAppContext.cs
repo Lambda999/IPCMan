@@ -1,4 +1,4 @@
-﻿ 
+ 
     namespace CefClient
     {
         public sealed class CefClientAppContext : ApplicationContext
@@ -13,6 +13,7 @@
             {
                 _mainForm = mainForm;
                 _pipeHost = pipeHost;
+                _pipeHost.PipeDisconnected += OnPipeDisconnected;
 
                 MainForm = _mainForm;
 
@@ -29,6 +30,11 @@
 
                     ExitThread();
                 };
+            }
+
+            private void OnPipeDisconnected()
+            {
+                SafeExit();
             }
 
             public void Start()
@@ -116,6 +122,8 @@
                     catch
                     {
                     }
+
+                    _pipeHost.PipeDisconnected -= OnPipeDisconnected;
 
                     try
                     {
