@@ -1,4 +1,4 @@
-﻿using CefSharp;
+using CefSharp;
 using CefSharp.WinForms;
 
 namespace CefClient
@@ -10,20 +10,28 @@ namespace CefClient
         {
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
 
-            var exitCode = CefSharp.BrowserSubprocess.SelfHost.Main(args);
-            if (exitCode >= 0)
-            {
-                return exitCode;
-            }
-
             var pipeName = args
                 .FirstOrDefault(x => x.StartsWith("--pipe-name=", StringComparison.OrdinalIgnoreCase))
                 ?.Substring("--pipe-name=".Length);
 
-            var settings = new CefSettings
+            var settings = new CefSettings();
+
+            var defaultSubprocessPath = Path.Combine(AppContext.BaseDirectory, "CefSharp.BrowserSubprocess.exe");
+            if (File.Exists(defaultSubprocessPath))
             {
-                BrowserSubprocessPath = System.Diagnostics.Process.GetCurrentProcess().MainModule!.FileName
-            };
+                settings.BrowserSubprocessPath = defaultSubprocessPath;
+            }
+            else
+            {
+                // 兼容旧部署：找不到独立子进程时，回退到 SelfHost
+                var exitCode = CefSharp.BrowserSubprocess.SelfHost.Main(args);
+                if (exitCode >= 0)
+                {
+                    return exitCode;
+                }
+
+                settings.BrowserSubprocessPath = System.Diagnostics.Process.GetCurrentProcess().MainModule!.FileName;
+            }
 
             settings.CefCommandLineArgs.Add("enable-media-stream");
             settings.CefCommandLineArgs.Add("use-fake-ui-for-media-stream");
