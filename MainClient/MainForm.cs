@@ -10,9 +10,11 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Serilog.Events;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Management;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Channels;
 using System.Windows.Forms;
 
@@ -435,6 +437,7 @@ namespace MainClient
                 "CefClient.exe");
 
             await using var session = new CefClientSession(cefExePath, TimeSpan.FromSeconds(15));
+            int? cefClientPid = null;
 
             session.OnLog += message =>
             {
@@ -460,6 +463,15 @@ namespace MainClient
             int dispatchedUvCount = 0;
             int completedUvCount = 0;
             bool stopRemainingUvByResult = false;
+            var cefClientDisconnected = 0;
+
+            session.OnDisconnected += reason =>
+            {
+                Interlocked.Exchange(ref cefClientDisconnected, 1);
+                _logger.LogWarning("CefClient disconnected. taskId={TaskId}, reason={Reason}", ctx.TaskId, reason);
+                completedUvTcs.TrySetException(new IOException(reason));
+                return Task.CompletedTask;
+            };
 
             session.OnBrowserResult += async response =>
             {
@@ -511,9 +523,26 @@ namespace MainClient
                 }
             };
 
+            using var stopNotifyReg = token.Register(() =>
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await session.SendExitAsync(CancellationToken.None);
+                        _logger.LogInformation("Sent exit to CefClient immediately due to stop request. taskId={TaskId}", ctx.TaskId);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex, "SendExitAsync on stop request failed. taskId={TaskId}", ctx.TaskId);
+                    }
+                });
+            });
+
             try
             {
                 await session.StartAsync(token);
+                cefClientPid = session.Process?.Id;
 
                 var startPayload = BuildStartPayload(ctx, rawTask);
                 await session.StartTaskAsync(ctx.UniqueId, startPayload, token);
@@ -570,6 +599,14 @@ namespace MainClient
                     }
                     catch (Exception ex)
                     {
+                        if (Volatile.Read(ref cefClientDisconnected) == 1 || IsCefClientDisconnected(ex))
+                        {
+                            _logger.LogWarning(ex,
+                                "CefClient disconnected during uv execution. taskId={TaskId}, uv={Uv}, consumer={ConsumerId}",
+                                ctx.TaskId, uvIndex + 1, consumerId);
+                            return false;
+                        }
+
                         _logger.LogError(ex,
                             "ExecuteTaskByCefClientAsync uv failed. taskId={TaskId}, uv={Uv}, consumer={ConsumerId}",
                             ctx.TaskId, uvIndex + 1, consumerId);
@@ -583,9 +620,22 @@ namespace MainClient
                     completedUvTcs.TrySetResult(true);
 
                 using var completeReg = innerToken.Register(() => completedUvTcs.TrySetCanceled(innerToken));
-                await completedUvTcs.Task;
+                try
+                {
+                    await completedUvTcs.Task;
+                }
+                catch (Exception ex) when (Volatile.Read(ref cefClientDisconnected) == 1 || IsCefClientDisconnected(ex))
+                {
+                    _logger.LogWarning(ex, "CefClient disconnected while waiting completion. taskId={TaskId}", ctx.TaskId);
+                    return false;
+                }
 
                 return stopRemainingUvByResult;
+            }
+            catch (Exception ex) when (Volatile.Read(ref cefClientDisconnected) == 1 || IsCefClientDisconnected(ex))
+            {
+                _logger.LogWarning(ex, "CefClient disconnected, stop current task and continue next. taskId={TaskId}", ctx.TaskId);
+                return false;
             }
             finally
             {
@@ -597,6 +647,8 @@ namespace MainClient
                 {
                     _logger.LogDebug(ex, "CloseGracefullyAsync failed. taskId={TaskId}", ctx.TaskId);
                 }
+
+                StartCleanupCefRootCacheAsync(ctx.TaskId, cefClientPid);
             }
         }
 
@@ -641,6 +693,98 @@ namespace MainClient
             // 例如 result.Data 里回了 stopRemainingUv = true
             var stop = result.Data?["stopRemainingUv"]?.GetValue<bool?>() ?? false;
             return stop;
+        }
+
+        private static bool IsCefClientDisconnected(Exception ex)
+        {
+            if (ex is IOException)
+                return true;
+
+            var msg = ex.Message ?? string.Empty;
+            return msg.Contains("CefClient 管道断开", StringComparison.OrdinalIgnoreCase)
+                   || msg.Contains("管道尚未建立", StringComparison.OrdinalIgnoreCase)
+                   || msg.Contains("Pipe is broken", StringComparison.OrdinalIgnoreCase)
+                   || msg.Contains("pipe has been ended", StringComparison.OrdinalIgnoreCase)
+                   || msg.Contains("pipe disconnected", StringComparison.OrdinalIgnoreCase)
+                   || msg.Contains("process exited", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private void StartCleanupCefRootCacheAsync(int taskId, int? cefClientPid)
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    // 给子进程一点点时间释放句柄
+                    await Task.Delay(300);
+
+                    var rootCachePath = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                        "CefSharp");
+                    var taskSlotsPath = Path.Combine(rootCachePath, "TaskSlots");
+
+                    if (!Directory.Exists(taskSlotsPath))
+                        return;
+
+                    if (cefClientPid.HasValue)
+                    {
+                        var processCachePath = Path.Combine(taskSlotsPath, $"proc_{cefClientPid.Value}");
+                        TryDeleteDirectoryWithRetry(processCachePath);
+                    }
+
+                    // 顺带清理已退出进程遗留目录
+                    foreach (var dir in Directory.GetDirectories(taskSlotsPath, "proc_*"))
+                    {
+                        var name = Path.GetFileName(dir);
+                        if (!name.StartsWith("proc_", StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        if (!int.TryParse(name["proc_".Length..], out var pid))
+                            continue;
+
+                        if (IsProcessAlive(pid))
+                            continue;
+
+                        TryDeleteDirectoryWithRetry(dir);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Cleanup CefSharp root cache failed. taskId={TaskId}, pid={Pid}", taskId, cefClientPid);
+                }
+            });
+        }
+
+        private static void TryDeleteDirectoryWithRetry(string path, int retries = 3, int delayMs = 150)
+        {
+            if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
+                return;
+
+            for (var i = 0; i < retries; i++)
+            {
+                try
+                {
+                    Directory.Delete(path, recursive: true);
+                    return;
+                }
+                catch when (i < retries - 1)
+                {
+                    Thread.Sleep(delayMs);
+                }
+            }
+        }
+
+        private static bool IsProcessAlive(int pid)
+        {
+            try
+            {
+                var p = Process.GetProcessById(pid);
+                return !p.HasExited;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
 
