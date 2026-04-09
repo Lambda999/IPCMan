@@ -124,8 +124,12 @@ public sealed class PipeHostService : IAsyncDisposable
                     break;
 
                 case "exit":
-                    await WaitRunTasksAsync(TimeSpan.FromSeconds(10));
-                    await _mainForm.RemoveAllBrowsersAsync();
+                    try { _cts.Cancel(); } catch { }
+                    _ = Task.Run(async () =>
+                    {
+                        try { await WaitRunTasksAsync(TimeSpan.FromMilliseconds(300)); } catch { }
+                        try { await _mainForm.RemoveAllBrowsersAsync(); } catch { }
+                    });
                     return;
             }
         }
