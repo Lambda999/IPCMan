@@ -21,6 +21,7 @@ namespace CefClient
     {
         private readonly FlowLayoutPanel _hostPanel;
         private readonly ConcurrentDictionary<string, BrowserSlot> _slots = new();
+        public Func<string, CancellationToken, Task>? LogAsync { get; set; }
         public MainForm()
         {
             InitializeComponent();
@@ -37,14 +38,19 @@ namespace CefClient
 
         private void MainForm_Load(object sender, EventArgs e)
         {
-
+            LogInfo("MainForm loaded.");
         }
 
 
         public async Task<bool> CreateBrowserAsync(string browserId, System.Text.Json.Nodes.JsonNode? payload, CancellationToken cancellationToken = default)
         {
             if (_slots.ContainsKey(browserId))
+            {
+                LogInfo($"CreateBrowserAsync skipped, browser already exists. browserId={browserId}");
                 return true;
+            }
+
+            LogInfo($"CreateBrowserAsync started. browserId={browserId}");
 
             var slot = await UiInvokeAsync(() =>
             {
@@ -154,7 +160,9 @@ namespace CefClient
                 return new BrowserSlot(browserId, panel, browser, requestContext, _hostPanel);
             }, cancellationToken);
 
-            return _slots.TryAdd(browserId, slot);
+            var added = _slots.TryAdd(browserId, slot);
+            LogInfo($"CreateBrowserAsync finished. browserId={browserId}, success={added}");
+            return added;
         }
 
 
@@ -166,6 +174,7 @@ namespace CefClient
         {
             if (!_slots.TryGetValue(browserId, out var slot))
             {
+                LogInfo($"RunBrowserAsync failed, browserId not found. browserId={browserId}");
                 return new BrowserRunResult
                 {
                     BrowserId = browserId,
@@ -174,6 +183,7 @@ namespace CefClient
                 };
             }
 
+            LogInfo($"RunBrowserAsync started. browserId={browserId}");
             return await slot.RunAsync(payload, cancellationToken);
         }
 
@@ -182,6 +192,7 @@ namespace CefClient
         {
             if (_slots.TryRemove(browserId, out var slot))
             {
+                LogInfo($"RemoveBrowserFastAsync started. browserId={browserId}");
                 await UiInvokeAsync(() =>
                 {
                     if (_hostPanel.Controls.Contains(slot.HostPanel))
@@ -194,16 +205,23 @@ namespace CefClient
                     {
                         await Task.Delay(200);
                         await slot.DisposeHeavyAsync();
+                        LogInfo($"RemoveBrowserFastAsync finished. browserId={browserId}");
                     }
                     catch
                     {
+                        LogInfo($"RemoveBrowserFastAsync dispose failed. browserId={browserId}");
                     }
                 });
+            }
+            else
+            {
+                LogInfo($"RemoveBrowserFastAsync skipped, browser not found. browserId={browserId}");
             }
         }
 
         public async Task RemoveAllBrowsersAsync()
         {
+            LogInfo("RemoveAllBrowsersAsync started.");
             foreach (var kv in _slots.ToArray())
             {
                 if (_slots.TryRemove(kv.Key, out var slot))
@@ -211,6 +229,7 @@ namespace CefClient
                     await slot.DisposeAsync();
                 }
             }
+            LogInfo("RemoveAllBrowsersAsync finished.");
         }
 
         private Task UiInvokeAsync(Action action, CancellationToken cancellationToken = default)
@@ -250,6 +269,7 @@ namespace CefClient
                 }
                 catch (Exception ex)
                 {
+                    LogInfo($"UiInvokeAsync execute failed: {ex.Message}");
                     tcs.TrySetException(ex);
                 }
             }
@@ -267,6 +287,7 @@ namespace CefClient
             }
             catch (Exception ex)
             {
+                LogInfo($"UiInvokeAsync invoke failed: {ex.Message}");
                 tcs.TrySetException(ex);
             }
 
@@ -310,6 +331,7 @@ namespace CefClient
                 }
                 catch (Exception ex)
                 {
+                    LogInfo($"UiInvokeAsync<T> execute failed: {ex.Message}");
                     tcs.TrySetException(ex);
                 }
             }
@@ -327,6 +349,7 @@ namespace CefClient
             }
             catch (Exception ex)
             {
+                LogInfo($"UiInvokeAsync<T> invoke failed: {ex.Message}");
                 tcs.TrySetException(ex);
             }
 
@@ -343,6 +366,25 @@ namespace CefClient
             {
                 return false;
             }
+        }
+
+        public async Task SendLogAsync(string message, CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                if (LogAsync != null)
+                {
+                    await LogAsync.Invoke(message, cancellationToken);
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        private void LogInfo(string message)
+        {
+            _ = SendLogAsync(message);
         }
     }
 }

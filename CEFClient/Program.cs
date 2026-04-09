@@ -33,15 +33,19 @@ namespace CefClient
 
             ApplicationConfiguration.Initialize();
             Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+            var mainForm = new MainForm();
 
             Application.ThreadException += (sender, e) =>
             {
-                // TODO: 这里接你的日志
+                _ = mainForm.SendLogAsync($"ThreadException: {e.Exception.Message}");
             };
 
             AppDomain.CurrentDomain.UnhandledException += (sender, e) =>
             {
-                // TODO: 这里接你的日志
+                if (e.ExceptionObject is Exception ex)
+                {
+                    _ = mainForm.SendLogAsync($"UnhandledException: {ex.Message}");
+                }
             };
 
             AppDomain.CurrentDomain.FirstChanceException += (sender, e) =>
@@ -62,12 +66,11 @@ namespace CefClient
                 }
             };
 
-            var mainForm = new MainForm();
-
             // 带管道参数：由主进程调度
             if (!string.IsNullOrWhiteSpace(pipeName))
             {
                 var pipeHost = new PipeHostService(pipeName, mainForm);
+                mainForm.LogAsync = (message, token) => pipeHost.SendLogAsync($"MainForm: {message}", token);
                 var appContext = new CefClientAppContext(mainForm, pipeHost);
 
                 appContext.Start();
