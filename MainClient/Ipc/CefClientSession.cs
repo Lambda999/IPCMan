@@ -39,6 +39,22 @@ namespace MainClient.Ipc
         public string PipeName => _pipeName;
 
         public event Func<string, Task>? OnLog;
+        public event Func<PipeEnvelope, Task>? OnBrowserResult;
+        public event Func<PipeEnvelope, Task>? OnBrowserStatus;
+
+        private static Task InvokeHandlerSafeAsync(Func<Task> handler)
+        {
+            return Task.Run(async () =>
+            {
+                try
+                {
+                    await handler();
+                }
+                catch
+                {
+                }
+            });
+        }
 
         public CefClientSession(
             string exePath,
@@ -162,6 +178,23 @@ namespace MainClient.Ipc
             };
         }
 
+        public async Task RunBrowserNoWaitAsync(
+            string taskId,
+            string browserId,
+            JsonNode? payload,
+            CancellationToken cancellationToken = default)
+        {
+            await SendAsync(
+                new PipeEnvelope
+                {
+                    Type = "runBrowser",
+                    TaskId = taskId,
+                    BrowserId = browserId,
+                    Payload = payload
+                },
+                cancellationToken);
+        }
+
         public async Task RemoveBrowserAsync(
             string taskId,
             string browserId,
@@ -268,8 +301,24 @@ namespace MainClient.Ipc
                     if (string.Equals(msg.Type, "log", StringComparison.OrdinalIgnoreCase))
                     {
                         if (!string.IsNullOrWhiteSpace(msg.Message) && OnLog != null)
-                            await OnLog.Invoke(msg.Message);
+                            _ = InvokeHandlerSafeAsync(() => OnLog.Invoke(msg.Message));
                         continue;
+                    }
+
+                    if (string.Equals(msg.Type, "browserResult", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (OnBrowserResult != null)
+                        {
+                            _ = InvokeHandlerSafeAsync(() => OnBrowserResult.Invoke(msg));
+                        }
+                    }
+
+                    if (string.Equals(msg.Type, "browserStatus", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (OnBrowserStatus != null)
+                        {
+                            _ = InvokeHandlerSafeAsync(() => OnBrowserStatus.Invoke(msg));
+                        }
                     }
 
                     var key = BuildResponseKey(msg);
