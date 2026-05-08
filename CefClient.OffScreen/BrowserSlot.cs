@@ -3,6 +3,7 @@
     using CefSharp;
     using CefSharp.OffScreen;
     using System.Diagnostics;
+    using System.Drawing;
     using System.Text.Json.Nodes;
 
     public sealed class BrowserSlot : IAsyncDisposable
@@ -10,16 +11,19 @@
         public string BrowserId { get; }
         public ChromiumWebBrowser Browser { get; }
         public IRequestContext RequestContext { get; }
+        private readonly Action<string, Image> _screenshotReady;
         private int _disposed;
 
         public BrowserSlot(
             string browserId,
             ChromiumWebBrowser browser,
-            IRequestContext requestContext)
+            IRequestContext requestContext,
+            Action<string, Image> screenshotReady)
         {
             BrowserId = browserId;
             Browser = browser;
             RequestContext = requestContext;
+            _screenshotReady = screenshotReady;
         }
 
         private async Task<string> GetPageTitleAsync(ChromiumWebBrowser browser, int timeoutMs = 3000)
@@ -88,6 +92,8 @@
 
                 await Task.Delay(TimeSpan.FromSeconds(15), cancellationToken);
 
+                var screenshotShown = await TryCaptureAndShowScreenshotAsync(cancellationToken);
+
                 return new BrowserRunResult
                 {
                     BrowserId = BrowserId,
@@ -96,7 +102,8 @@
                     Data = new JsonObject
                     {
                         ["title"] = title ?? "",
-                        ["url"] = url
+                        ["url"] = url,
+                        ["screenshotShown"] = screenshotShown
                     }
                 };
             }
@@ -117,6 +124,33 @@
                     Success = false,
                     Message = ex.Message
                 };
+            }
+        }
+
+
+        private async Task<bool> TryCaptureAndShowScreenshotAsync(CancellationToken cancellationToken)
+        {
+            if (Browser.IsDisposed)
+                return false;
+
+            try
+            {
+                using var bitmap = await Browser.ScreenshotAsync(ignoreExistingScreenshot: true);
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (bitmap == null)
+                    return false;
+
+                _screenshotReady(BrowserId, new Bitmap(bitmap));
+                return true;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch
+            {
+                return false;
             }
         }
 

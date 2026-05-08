@@ -55,7 +55,7 @@ namespace CefClient
                     Size = BrowserViewportSize
                 };
 
-                return new BrowserSlot(browserId, browser, requestContext);
+                return new BrowserSlot(browserId, browser, requestContext, ShowBrowserScreenshot);
             }, cancellationToken);
 
             return _slots.TryAdd(browserId, slot);
@@ -77,6 +77,81 @@ namespace CefClient
             }
 
             return await slot.RunAsync(payload, cancellationToken);
+        }
+
+
+        private void ShowBrowserScreenshot(string browserId, Image screenshot)
+        {
+            if (IsDisposed || Disposing)
+            {
+                screenshot.Dispose();
+                return;
+            }
+
+            _ = UiInvokeAsync(() =>
+            {
+                if (IsDisposed || Disposing)
+                {
+                    screenshot.Dispose();
+                    return;
+                }
+
+                var item = screenshotPanel.Controls
+                    .OfType<Panel>()
+                    .FirstOrDefault(x => string.Equals(x.Name, GetScreenshotItemName(browserId), StringComparison.OrdinalIgnoreCase));
+
+                if (item == null)
+                {
+                    item = CreateScreenshotItem(browserId);
+                    screenshotPanel.Controls.Add(item);
+                }
+
+                var pictureBox = item.Controls.OfType<PictureBox>().First();
+                var oldImage = pictureBox.Image;
+                pictureBox.Image = screenshot;
+                oldImage?.Dispose();
+            }).ContinueWith(task =>
+            {
+                if (task.IsFaulted || task.IsCanceled)
+                    screenshot.Dispose();
+            }, TaskScheduler.Default);
+        }
+
+        private static string GetScreenshotItemName(string browserId)
+        {
+            return $"screenshot_{browserId}";
+        }
+
+        private static Panel CreateScreenshotItem(string browserId)
+        {
+            var item = new Panel
+            {
+                Name = GetScreenshotItemName(browserId),
+                Width = 240,
+                Height = 560,
+                Margin = new Padding(8),
+                BorderStyle = BorderStyle.FixedSingle
+            };
+
+            var title = new Label
+            {
+                AutoEllipsis = true,
+                Dock = DockStyle.Top,
+                Height = 28,
+                Text = browserId,
+                TextAlign = ContentAlignment.MiddleCenter
+            };
+
+            var pictureBox = new PictureBox
+            {
+                Dock = DockStyle.Fill,
+                SizeMode = PictureBoxSizeMode.Zoom,
+                BackColor = Color.WhiteSmoke
+            };
+
+            item.Controls.Add(pictureBox);
+            item.Controls.Add(title);
+            return item;
         }
 
         public async Task RemoveBrowserFastAsync(string browserId)
