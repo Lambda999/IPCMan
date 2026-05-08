@@ -522,7 +522,7 @@ namespace MainClient
         {
             ctx.UniqueId = Guid.NewGuid().ToString("D");
 
-            var cefProcessDirectory = _appSettings.IsOsrMode ? "CefClient.OffScreen" : "CefClient";
+            var cefProcessDirectory = _appSettings.IsOsrMode ? "CefClient" : "CefClient";
             var cefProcessFileName = _appSettings.IsOsrMode ? "CefClient.OffScreen.exe" : "CefClient.exe";
             var cefExePath = Path.Combine(
                 AppDomain.CurrentDomain.BaseDirectory,

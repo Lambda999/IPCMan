@@ -10,20 +10,14 @@ namespace CefClient
         public static int Main(string[] args)
         {
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
-
-            var exitCode = CefSharp.BrowserSubprocess.SelfHost.Main(args);
-            if (exitCode >= 0)
-            {
-                return exitCode;
-            }
-
+            var defaultSubprocessPath = Path.Combine(AppContext.BaseDirectory, "CefSharp.BrowserSubprocess.exe");
             var pipeName = args
                 .FirstOrDefault(x => x.StartsWith("--pipe-name=", StringComparison.OrdinalIgnoreCase))
                 ?.Substring("--pipe-name=".Length);
 
             var settings = new CefSharp.OffScreen.CefSettings
             {
-                BrowserSubprocessPath = System.Diagnostics.Process.GetCurrentProcess().MainModule!.FileName
+                 BrowserSubprocessPath = defaultSubprocessPath
             };
 
             settings.CefCommandLineArgs.Add("enable-media-stream");

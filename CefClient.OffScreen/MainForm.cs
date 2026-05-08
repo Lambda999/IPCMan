@@ -15,13 +15,13 @@ namespace CefClient
         public MainForm()
         {
             InitializeComponent();
-            ShowInTaskbar = false;
-            WindowState = FormWindowState.Minimized;
+            ShowInTaskbar = true;
+            //WindowState = FormWindowState.Minimized;
         }
 
         private void MainForm_Load(object sender, EventArgs e)
         {
-            BeginInvoke(new Action(Hide));
+           // BeginInvoke(new Action(Hide));
         }
 
         public async Task<bool> CreateBrowserAsync(string browserId, CancellationToken cancellationToken = default)
