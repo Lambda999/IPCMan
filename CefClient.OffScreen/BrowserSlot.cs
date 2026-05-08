@@ -3,6 +3,7 @@
     using CefSharp;
     using CefSharp.OffScreen;
     using System.Diagnostics;
+    using System.Drawing;
     using System.Text.Json.Nodes;
 
     public sealed class BrowserSlot : IAsyncDisposable
@@ -10,16 +11,19 @@
         public string BrowserId { get; }
         public ChromiumWebBrowser Browser { get; }
         public IRequestContext RequestContext { get; }
+        private readonly Action<string, Image> _screenshotReady;
         private int _disposed;
 
         public BrowserSlot(
             string browserId,
             ChromiumWebBrowser browser,
-            IRequestContext requestContext)
+            IRequestContext requestContext,
+            Action<string, Image> screenshotReady)
         {
             BrowserId = browserId;
             Browser = browser;
             RequestContext = requestContext;
+            _screenshotReady = screenshotReady;
         }
 
         private async Task<string> GetPageTitleAsync(ChromiumWebBrowser browser, int timeoutMs = 3000)
@@ -86,7 +90,14 @@
 
                 var title = await GetPageTitleAsync(Browser);
 
-                await Task.Delay(TimeSpan.FromSeconds(15), cancellationToken);
+                // 页面加载完成后尽快先截一张，避免等到任务结束即将回收浏览器时窗口才更新，
+                // 导致用户几乎看不到 MainForm 上的预览图。后面保留结束前截图用于刷新动态页面最终状态。
+                await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+                var firstScreenshotShown = await TryCaptureAndShowScreenshotAsync(cancellationToken);
+
+                await Task.Delay(TimeSpan.FromSeconds(14), cancellationToken);
+                var finalScreenshotShown = await TryCaptureAndShowScreenshotAsync(cancellationToken);
+                var screenshotShown = firstScreenshotShown || finalScreenshotShown;
 
                 return new BrowserRunResult
                 {
@@ -96,7 +107,10 @@
                     Data = new JsonObject
                     {
                         ["title"] = title ?? "",
-                        ["url"] = url
+                        ["url"] = url,
+                        ["screenshotShown"] = screenshotShown,
+                        ["firstScreenshotShown"] = firstScreenshotShown,
+                        ["finalScreenshotShown"] = finalScreenshotShown
                     }
                 };
             }
@@ -117,6 +131,33 @@
                     Success = false,
                     Message = ex.Message
                 };
+            }
+        }
+
+
+        private async Task<bool> TryCaptureAndShowScreenshotAsync(CancellationToken cancellationToken)
+        {
+            if (Browser.IsDisposed)
+                return false;
+
+            try
+            {
+                using var bitmap = await Browser.ScreenshotAsync(ignoreExistingScreenshot: true);
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (bitmap == null)
+                    return false;
+
+                _screenshotReady(BrowserId, new Bitmap(bitmap));
+                return true;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch
+            {
+                return false;
             }
         }
 
