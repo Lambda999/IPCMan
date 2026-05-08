@@ -75,6 +75,11 @@
         public bool IsHiddenMode { get; set; }
 
         /// <summary>
+        /// OSR 离屏渲染模式
+        /// </summary>
+        public bool IsOsrMode { get; set; }
+
+        /// <summary>
         /// 测试模式
         /// </summary>
         public bool IsTest { get; set; }

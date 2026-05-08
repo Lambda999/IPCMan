@@ -75,7 +75,7 @@ namespace MainClient.Ipc
         public async Task StartAsync(CancellationToken cancellationToken = default)
         {
             if (!File.Exists(_exePath))
-                throw new FileNotFoundException("找不到 CefClient.exe", _exePath);
+                throw new FileNotFoundException($"找不到 {Path.GetFileName(_exePath)}", _exePath);
 
             var psi = new ProcessStartInfo
             {
@@ -93,7 +93,7 @@ namespace MainClient.Ipc
             };
 
             if (!process.Start())
-                throw new InvalidOperationException("启动 CefClient.exe 失败");
+                throw new InvalidOperationException($"启动 {Path.GetFileName(_exePath)} 失败");
 
             Process = process;
 

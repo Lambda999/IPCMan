@@ -56,6 +56,7 @@
             label26 = new Label();
             checkBox_IsProxyMode = new CheckBox();
             checkBox_IsHiddenMode = new CheckBox();
+            checkBox_IsOsrMode = new CheckBox();
             checkBox_AutoStart = new CheckBox();
             checkBox_CheckIp = new CheckBox();
             groupBox5 = new GroupBox();
@@ -205,6 +206,7 @@
             groupBox2.Controls.Add(label26);
             groupBox2.Controls.Add(checkBox_IsProxyMode);
             groupBox2.Controls.Add(checkBox_IsHiddenMode);
+            groupBox2.Controls.Add(checkBox_IsOsrMode);
             groupBox2.Controls.Add(checkBox_AutoStart);
             groupBox2.Controls.Add(checkBox_CheckIp);
             groupBox2.Controls.Add(groupBox5);
@@ -437,6 +439,17 @@
             checkBox_IsHiddenMode.Text = "隐藏模式";
             checkBox_IsHiddenMode.UseVisualStyleBackColor = true;
             // 
+            // checkBox_IsOsrMode
+            //
+            checkBox_IsOsrMode.AutoSize = true;
+            checkBox_IsOsrMode.Location = new Point(789, 193);
+            checkBox_IsOsrMode.Margin = new Padding(4, 5, 4, 5);
+            checkBox_IsOsrMode.Name = "checkBox_IsOsrMode";
+            checkBox_IsOsrMode.Size = new Size(91, 24);
+            checkBox_IsOsrMode.TabIndex = 78;
+            checkBox_IsOsrMode.Text = "OSR模式";
+            checkBox_IsOsrMode.UseVisualStyleBackColor = true;
+            //
             // checkBox_AutoStart
             // 
             checkBox_AutoStart.AutoSize = true;
@@ -1064,6 +1077,7 @@
         private System.Windows.Forms.CheckBox checkBox_AutoStart;
         private System.Windows.Forms.CheckBox checkBox_IsProxyMode;
         private System.Windows.Forms.CheckBox checkBox_IsHiddenMode;
+        private System.Windows.Forms.CheckBox checkBox_IsOsrMode;
         private System.Windows.Forms.Label label8;
         private System.Windows.Forms.NumericUpDown numericUpDown_RestartComputerInterval;
         private System.Windows.Forms.Label label16;
