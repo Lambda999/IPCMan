@@ -1,41 +1,28 @@
 ﻿using CefSharp;
-using System;
+using CefSharp.OffScreen;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.ComponentModel;
-using System.Data;
 using System.Drawing;
-using System.Linq;
-using System.Text;
 using System.Text.Json.Nodes;
-using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace CefClient
 {
     public partial class MainForm : Form
     {
-        private readonly FlowLayoutPanel _hostPanel;
+        private static readonly Size BrowserViewportSize = new(420, 920);
         private readonly ConcurrentDictionary<string, BrowserSlot> _slots = new();
+
         public MainForm()
         {
             InitializeComponent();
-            _hostPanel = new FlowLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                AutoScroll = true,
-                WrapContents = true,
-                FlowDirection = FlowDirection.LeftToRight
-            };
-
-            Controls.Add(_hostPanel);
+            ShowInTaskbar = false;
+            WindowState = FormWindowState.Minimized;
         }
 
         private void MainForm_Load(object sender, EventArgs e)
         {
-
+            BeginInvoke(new Action(Hide));
         }
-
 
         public async Task<bool> CreateBrowserAsync(string browserId, CancellationToken cancellationToken = default)
         {
@@ -61,33 +48,22 @@ namespace CefClient
                     PersistSessionCookies = false,
                 });
 
-                var panel = new Panel
+                var browser = new ChromiumWebBrowser(
+                    "about:blank",
+                    requestContext: requestContext)
                 {
-                    Width = 420,
-                    Height = 920,
-                    Margin = new Padding(5),
-                    BorderStyle = BorderStyle.FixedSingle
+                    Size = BrowserViewportSize
                 };
 
-                var browser = new ChromiumWebBrowser("about:blank", requestContext)
-                {
-                    Dock = DockStyle.Fill
-                };
-
-                panel.Controls.Add(browser);
-                _hostPanel.Controls.Add(panel);
-
-                return new BrowserSlot(browserId, panel, browser, requestContext, _hostPanel);
+                return new BrowserSlot(browserId, browser, requestContext);
             }, cancellationToken);
 
             return _slots.TryAdd(browserId, slot);
         }
 
-
-
         public async Task<BrowserRunResult> RunBrowserAsync(
             string browserId,
-            System.Text.Json.Nodes.JsonNode? payload,
+            JsonNode? payload,
             CancellationToken cancellationToken = default)
         {
             if (!_slots.TryGetValue(browserId, out var slot))
@@ -103,16 +79,11 @@ namespace CefClient
             return await slot.RunAsync(payload, cancellationToken);
         }
 
-
         public async Task RemoveBrowserFastAsync(string browserId)
         {
             if (_slots.TryRemove(browserId, out var slot))
             {
-                await UiInvokeAsync(() =>
-                {
-                    if (_hostPanel.Controls.Contains(slot.HostPanel))
-                        _hostPanel.Controls.Remove(slot.HostPanel);
-                });
+                await slot.DetachFromUiAsync();
 
                 _ = Task.Run(async () =>
                 {
@@ -257,18 +228,6 @@ namespace CefClient
             }
 
             return tcs.Task;
-        }
-        private async Task<bool> TryUiInvokeAsync(Action action, CancellationToken cancellationToken = default)
-        {
-            try
-            {
-                await UiInvokeAsync(action, cancellationToken);
-                return true;
-            }
-            catch
-            {
-                return false;
-            }
         }
     }
 }
