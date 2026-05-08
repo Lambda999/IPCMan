@@ -1,33 +1,45 @@
-﻿
-using CefSharp;
+﻿using CefSharp;
 using CefSharp.OffScreen;
 
 namespace CefClient;
 
+public enum PageLoadResult
+{
+    Completed,
+    Failed,
+    TimedOut
+}
+
 public static class CefHelper
 {
-    public static Task<bool> LoadUrlAndWaitAsync(
+    public static Task<PageLoadResult> LoadUrlAndWaitAsync(
         ChromiumWebBrowser browser,
         string url,
         TimeSpan timeout,
         CancellationToken cancellationToken = default)
     {
-        var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var tcs = new TaskCompletionSource<PageLoadResult>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         EventHandler<LoadingStateChangedEventArgs>? loadingHandler = null;
         EventHandler<LoadErrorEventArgs>? loadErrorHandler = null;
         CancellationTokenSource? timeoutCts = null;
-        CancellationTokenRegistration reg = default;
+        CancellationTokenRegistration timeoutReg = default;
+        CancellationTokenRegistration cancelReg = default;
+        var cleaned = 0;
 
         void Cleanup()
         {
+            if (Interlocked.Exchange(ref cleaned, 1) != 0)
+                return;
+
             if (loadingHandler != null)
                 browser.LoadingStateChanged -= loadingHandler;
 
             if (loadErrorHandler != null)
                 browser.LoadError -= loadErrorHandler;
 
-            reg.Dispose();
+            timeoutReg.Dispose();
+            cancelReg.Dispose();
             timeoutCts?.Dispose();
         }
 
@@ -36,7 +48,7 @@ public static class CefHelper
             if (!e.IsLoading)
             {
                 Cleanup();
-                tcs.TrySetResult(true);
+                tcs.TrySetResult(PageLoadResult.Completed);
             }
         };
 
@@ -46,7 +58,7 @@ public static class CefHelper
             if (e.Frame.IsMain)
             {
                 Cleanup();
-                tcs.TrySetResult(false);
+                tcs.TrySetResult(PageLoadResult.Failed);
             }
         };
 
@@ -54,14 +66,32 @@ public static class CefHelper
         browser.LoadError += loadErrorHandler;
 
         timeoutCts = new CancellationTokenSource(timeout);
-        timeoutCts.Token.Register(() =>
+        timeoutReg = timeoutCts.Token.Register(() =>
         {
+            try
+            {
+                if (!browser.IsDisposed)
+                    browser.Stop();
+            }
+            catch
+            {
+            }
+
             Cleanup();
-            tcs.TrySetResult(false);
+            tcs.TrySetResult(PageLoadResult.TimedOut);
         });
 
-        reg = cancellationToken.Register(() =>
+        cancelReg = cancellationToken.Register(() =>
         {
+            try
+            {
+                if (!browser.IsDisposed)
+                    browser.Stop();
+            }
+            catch
+            {
+            }
+
             Cleanup();
             tcs.TrySetCanceled(cancellationToken);
         });

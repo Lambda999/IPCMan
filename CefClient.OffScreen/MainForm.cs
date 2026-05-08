@@ -55,10 +55,14 @@ namespace CefClient
                     Size = BrowserViewportSize
                 };
 
-                return new BrowserSlot(browserId, browser, requestContext);
+                return new BrowserSlot(browserId, browser, requestContext, ShowBrowserScreenshot);
             }, cancellationToken);
 
-            return _slots.TryAdd(browserId, slot);
+            var added = _slots.TryAdd(browserId, slot);
+            if (added)
+                ShowBrowserPlaceholder(browserId);
+
+            return added;
         }
 
         public async Task<BrowserRunResult> RunBrowserAsync(
@@ -68,15 +72,129 @@ namespace CefClient
         {
             if (!_slots.TryGetValue(browserId, out var slot))
             {
+                await CreateBrowserAsync(browserId, cancellationToken);
+            }
+
+            if (!_slots.TryGetValue(browserId, out slot))
+            {
                 return new BrowserRunResult
                 {
                     BrowserId = browserId,
                     Success = false,
-                    Message = "browserId 不存在"
+                    Message = "browserId 创建失败"
                 };
             }
 
             return await slot.RunAsync(payload, cancellationToken);
+        }
+
+
+
+        private void ShowBrowserPlaceholder(string browserId)
+        {
+            _ = UiInvokeAsync(() =>
+            {
+                EnsurePreviewWindowVisible();
+
+                var item = screenshotPanel.Controls
+                    .OfType<Panel>()
+                    .FirstOrDefault(x => string.Equals(x.Name, GetScreenshotItemName(browserId), StringComparison.OrdinalIgnoreCase));
+
+                if (item == null)
+                    screenshotPanel.Controls.Add(CreateScreenshotItem(browserId));
+            });
+        }
+
+        private void ShowBrowserScreenshot(string browserId, Image screenshot)
+        {
+            if (IsDisposed || Disposing)
+            {
+                screenshot.Dispose();
+                return;
+            }
+
+            _ = UiInvokeAsync(() =>
+            {
+                if (IsDisposed || Disposing)
+                {
+                    screenshot.Dispose();
+                    return;
+                }
+
+                EnsurePreviewWindowVisible();
+
+                var item = screenshotPanel.Controls
+                    .OfType<Panel>()
+                    .FirstOrDefault(x => string.Equals(x.Name, GetScreenshotItemName(browserId), StringComparison.OrdinalIgnoreCase));
+
+                if (item == null)
+                {
+                    item = CreateScreenshotItem(browserId);
+                    screenshotPanel.Controls.Add(item);
+                }
+
+                var title = item.Controls.OfType<Label>().First();
+                title.Text = $"{browserId}  {DateTime.Now:HH:mm:ss}";
+
+                var pictureBox = item.Controls.OfType<PictureBox>().First();
+                var oldImage = pictureBox.Image;
+                pictureBox.Image = screenshot;
+                oldImage?.Dispose();
+            }).ContinueWith(task =>
+            {
+                if (task.IsFaulted || task.IsCanceled)
+                    screenshot.Dispose();
+            }, TaskScheduler.Default);
+        }
+
+
+        private void EnsurePreviewWindowVisible()
+        {
+            if (!Visible)
+                Show();
+
+            if (WindowState == FormWindowState.Minimized)
+                WindowState = FormWindowState.Normal;
+
+            BringToFront();
+            Activate();
+        }
+
+        private static string GetScreenshotItemName(string browserId)
+        {
+            return $"screenshot_{browserId}";
+        }
+
+        private static Panel CreateScreenshotItem(string browserId)
+        {
+            var item = new Panel
+            {
+                Name = GetScreenshotItemName(browserId),
+                Width = 240,
+                Height = 560,
+                Margin = new Padding(8),
+                BorderStyle = BorderStyle.FixedSingle
+            };
+
+            var title = new Label
+            {
+                AutoEllipsis = true,
+                Dock = DockStyle.Top,
+                Height = 28,
+                Text = browserId,
+                TextAlign = ContentAlignment.MiddleCenter
+            };
+
+            var pictureBox = new PictureBox
+            {
+                Dock = DockStyle.Fill,
+                SizeMode = PictureBoxSizeMode.Zoom,
+                BackColor = Color.WhiteSmoke
+            };
+
+            item.Controls.Add(pictureBox);
+            item.Controls.Add(title);
+            return item;
         }
 
         public async Task RemoveBrowserFastAsync(string browserId)
@@ -101,13 +219,31 @@ namespace CefClient
 
         public async Task RemoveAllBrowsersAsync()
         {
+            var disposeTasks = new List<Task>();
             foreach (var kv in _slots.ToArray())
             {
                 if (_slots.TryRemove(kv.Key, out var slot))
                 {
-                    await slot.DisposeAsync();
+                    disposeTasks.Add(Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await slot.DisposeHeavyAsync();
+                        }
+                        catch
+                        {
+                        }
+                    }));
                 }
             }
+
+            if (disposeTasks.Count == 0)
+                return;
+
+            var all = Task.WhenAll(disposeTasks);
+            var finished = await Task.WhenAny(all, Task.Delay(TimeSpan.FromSeconds(2)));
+            if (finished == all)
+                await all;
         }
 
         private Task UiInvokeAsync(Action action, CancellationToken cancellationToken = default)

@@ -728,40 +728,47 @@ namespace MainClient.Common
 
         public static void ClearLocalChromeProcesses()
         {
+            ClearLocalBrowserProcesses();
+        }
+
+        /// <summary>
+        /// 清理残留的 CefClient/CefClient.OffScreen 进程，以及当前程序目录下的浏览器辅助进程。
+        /// </summary>
+        public static void ClearLocalBrowserProcesses()
+        {
             try
             {
-                string baseDir = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\');
-                string[] targets = { "chrome.exe", "node.exe" };
+                string baseDir = AppDomain.CurrentDomain.BaseDirectory.TrimEnd(
+                    Path.DirectorySeparatorChar,
+                    Path.AltDirectorySeparatorChar);
+                string[] localOnlyTargets = { "chrome.exe", "node.exe" };
+                string[] cefTargets = { "CefClient.exe", "CefClient.OffScreen.exe" };
+
                 using (var searcher = new ManagementObjectSearcher("SELECT ProcessId, Name, ExecutablePath FROM Win32_Process"))
                 {
                     foreach (ManagementObject obj in searcher.Get())
                     {
                         try
                         {
-                            string name = obj["Name"]?.ToString();
-                            string path = obj["ExecutablePath"]?.ToString();
+                            string name = obj["Name"]?.ToString() ?? string.Empty;
+                            string path = obj["ExecutablePath"]?.ToString() ?? string.Empty;
 
                             if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(path))
                                 continue;
 
-                            if (!targets.Contains(name, StringComparer.OrdinalIgnoreCase))
-                                continue;
+                            var isCefClientProcess = cefTargets.Contains(name, StringComparer.OrdinalIgnoreCase);
+                            var isLocalSupportProcess =
+                                localOnlyTargets.Contains(name, StringComparer.OrdinalIgnoreCase) &&
+                                path.StartsWith(baseDir, StringComparison.OrdinalIgnoreCase);
 
-                            if (!path.StartsWith(baseDir, StringComparison.OrdinalIgnoreCase))
+                            if (!isCefClientProcess && !isLocalSupportProcess)
                                 continue;
 
                             int pid = Convert.ToInt32(obj["ProcessId"]);
+                            if (pid == Environment.ProcessId)
+                                continue;
 
-                            try
-                            {
-                                var proc = Process.GetProcessById(pid);
-                                if (!proc.HasExited)
-                                {
-                                    proc.Kill(true); // 杀子进程
-                                    proc.WaitForExit(3000);
-                                }
-                            }
-                            catch { }
+                            KillProcessTree(pid);
                         }
                         catch { }
                     }
@@ -769,10 +776,37 @@ namespace MainClient.Common
             }
             catch (Exception)
             {
-
-
             }
 
+        }
+
+        private static void KillProcessTree(int pid)
+        {
+            try
+            {
+                var proc = Process.GetProcessById(pid);
+                if (!proc.HasExited)
+                {
+                    proc.Kill(true);
+                    proc.WaitForExit(3000);
+                }
+            }
+            catch
+            {
+                try
+                {
+                    using var taskKill = Process.Start(new ProcessStartInfo
+                    {
+                        FileName = "taskkill",
+                        Arguments = $"/F /T /PID {pid}",
+                        CreateNoWindow = true,
+                        UseShellExecute = false
+                    });
+
+                    taskKill?.WaitForExit(3000);
+                }
+                catch { }
+            }
         }
 
 

@@ -136,6 +136,7 @@ namespace MainClient
 
 
             var host = builder.Build();
+            CommonHelper.ClearLocalBrowserProcesses();
             ApplicationConfiguration.Initialize();
             Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
             Application.ThreadException += (sender, e) =>
@@ -165,7 +166,7 @@ namespace MainClient
             Application.ApplicationExit += (sender, e) =>
             {
                 StopErrorDialogGuard();
-                CommonHelper.ClearLocalChromeProcesses();
+                CommonHelper.ClearLocalBrowserProcesses();
             };
 
             Application.Run(host.Services.GetRequiredService<MainForm>());

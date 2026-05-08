@@ -28,19 +28,34 @@
         /// </summary>
         private void InitializeComponent()
         {
+            screenshotPanel = new FlowLayoutPanel();
             SuspendLayout();
-            // 
+            //
+            // screenshotPanel
+            //
+            screenshotPanel.AutoScroll = true;
+            screenshotPanel.Dock = DockStyle.Fill;
+            screenshotPanel.Location = new Point(0, 0);
+            screenshotPanel.Name = "screenshotPanel";
+            screenshotPanel.Padding = new Padding(8);
+            screenshotPanel.Size = new Size(1125, 888);
+            screenshotPanel.TabIndex = 0;
+            screenshotPanel.WrapContents = true;
+            //
             // MainForm
-            // 
+            //
             AutoScaleDimensions = new SizeF(9F, 20F);
             AutoScaleMode = AutoScaleMode.Font;
             ClientSize = new Size(1125, 888);
+            Controls.Add(screenshotPanel);
             Name = "MainForm";
-            Text = "MainForm";
+            Text = "CefClient.OffScreen 截图预览";
             Load += MainForm_Load;
             ResumeLayout(false);
         }
 
         #endregion
+
+        private FlowLayoutPanel screenshotPanel;
     }
 }
