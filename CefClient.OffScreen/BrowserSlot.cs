@@ -1,6 +1,4 @@
-﻿
-
-namespace CefClient
+﻿namespace CefClient
 {
     using CefSharp;
     using CefSharp.OffScreen;
@@ -10,25 +8,20 @@ namespace CefClient
     public sealed class BrowserSlot : IAsyncDisposable
     {
         public string BrowserId { get; }
-        public Panel HostPanel { get; }
         public ChromiumWebBrowser Browser { get; }
         public IRequestContext RequestContext { get; }
-        private readonly Control _parent;
         private int _disposed;
 
         public BrowserSlot(
             string browserId,
-            Panel hostPanel,
             ChromiumWebBrowser browser,
-            IRequestContext requestContext,
-            Control parent)
+            IRequestContext requestContext)
         {
             BrowserId = browserId;
-            HostPanel = hostPanel;
             Browser = browser;
             RequestContext = requestContext;
-            _parent = parent;
         }
+
         private async Task<string> GetPageTitleAsync(ChromiumWebBrowser browser, int timeoutMs = 3000)
         {
             if (browser == null || browser.IsDisposed)
@@ -60,7 +53,6 @@ namespace CefClient
             return "";
         }
 
-
         public async Task<BrowserRunResult> RunAsync(JsonNode? payload, CancellationToken cancellationToken = default)
         {
             try
@@ -77,10 +69,10 @@ namespace CefClient
                 }
 
                 var ok = await CefHelper.LoadUrlAndWaitAsync(
-                Browser,
-                url,
-                TimeSpan.FromSeconds(30),
-                cancellationToken);
+                    Browser,
+                    url,
+                    TimeSpan.FromSeconds(30),
+                    cancellationToken);
 
                 if (!ok)
                 {
@@ -91,10 +83,10 @@ namespace CefClient
                         Message = "页面加载超时"
                     };
                 }
- 
+
                 var title = await GetPageTitleAsync(Browser);
 
-                await Task.Delay(TimeSpan.FromSeconds(15));
+                await Task.Delay(TimeSpan.FromSeconds(15), cancellationToken);
 
                 return new BrowserRunResult
                 {
@@ -128,27 +120,16 @@ namespace CefClient
             }
         }
 
-
-
         /// <summary>
-        /// 只从界面移除，不做重释放
+        /// 离屏浏览器没有 WinForms 承载控件，这里保留原调用点以保持外部流程不变。
         /// </summary>
         public Task DetachFromUiAsync()
         {
-            try
-            {
-                if (_parent.Controls.Contains(HostPanel))
-                    _parent.Controls.Remove(HostPanel);
-            }
-            catch
-            {
-            }
-
             return Task.CompletedTask;
         }
 
         /// <summary>
-        /// 真正做重释放，建议后台调用
+        /// 真正做重释放，建议后台调用。
         /// </summary>
         public async Task DisposeHeavyAsync()
         {
@@ -157,63 +138,18 @@ namespace CefClient
 
             try
             {
-                if (HostPanel.Controls.Contains(Browser))
-                    HostPanel.Controls.Remove(Browser);
-            }
-            catch
-            {
-            }
-
-            try
-            {
                 Browser.Dispose();
             }
             catch
             {
             }
-
-            try
-            {
-                HostPanel.Dispose();
-            }
-            catch
-            {
-            }
-
-            // IRequestContext 一般不用你手动 Dispose
-            // 如果你当前版本支持并且你确认需要，也可以自己补
 
             await Task.CompletedTask;
         }
 
         public async ValueTask DisposeAsync()
         {
-            try
-            {
-                if (_parent.Controls.Contains(HostPanel))
-                    _parent.Controls.Remove(HostPanel);
-            }
-            catch { }
-
-            try
-            {
-                HostPanel.Controls.Remove(Browser);
-            }
-            catch { }
-
-            try
-            {
-                Browser.Dispose();
-            }
-            catch { }
-
-            try
-            {
-                HostPanel.Dispose();
-            }
-            catch { }
-
-            await Task.CompletedTask;
+            await DisposeHeavyAsync();
         }
     }
 

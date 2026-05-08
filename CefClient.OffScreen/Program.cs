@@ -1,5 +1,6 @@
 ﻿using CefSharp;
-using CefSharp.WinForms;
+using CefSharp.OffScreen;
+using System.Windows.Forms;
 
 namespace CefClient
 {
@@ -20,7 +21,7 @@ namespace CefClient
                 .FirstOrDefault(x => x.StartsWith("--pipe-name=", StringComparison.OrdinalIgnoreCase))
                 ?.Substring("--pipe-name=".Length);
 
-            var settings = new CefSettings
+            var settings = new CefSharp.OffScreen.CefSettings
             {
                 BrowserSubprocessPath = System.Diagnostics.Process.GetCurrentProcess().MainModule!.FileName
             };
