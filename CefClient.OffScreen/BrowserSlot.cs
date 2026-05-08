@@ -99,6 +99,8 @@
                 var finalScreenshotShown = await TryCaptureAndShowScreenshotAsync(cancellationToken);
                 var screenshotShown = firstScreenshotShown || finalScreenshotShown;
 
+                var screenshotShown = await TryCaptureAndShowScreenshotAsync(cancellationToken);
+
                 return new BrowserRunResult
                 {
                     BrowserId = BrowserId,
