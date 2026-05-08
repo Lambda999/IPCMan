@@ -58,7 +58,11 @@ namespace CefClient
                 return new BrowserSlot(browserId, browser, requestContext, ShowBrowserScreenshot);
             }, cancellationToken);
 
-            return _slots.TryAdd(browserId, slot);
+            var added = _slots.TryAdd(browserId, slot);
+            if (added)
+                ShowBrowserPlaceholder(browserId);
+
+            return added;
         }
 
         public async Task<BrowserRunResult> RunBrowserAsync(
@@ -80,6 +84,22 @@ namespace CefClient
         }
 
 
+
+        private void ShowBrowserPlaceholder(string browserId)
+        {
+            _ = UiInvokeAsync(() =>
+            {
+                EnsurePreviewWindowVisible();
+
+                var item = screenshotPanel.Controls
+                    .OfType<Panel>()
+                    .FirstOrDefault(x => string.Equals(x.Name, GetScreenshotItemName(browserId), StringComparison.OrdinalIgnoreCase));
+
+                if (item == null)
+                    screenshotPanel.Controls.Add(CreateScreenshotItem(browserId));
+            });
+        }
+
         private void ShowBrowserScreenshot(string browserId, Image screenshot)
         {
             if (IsDisposed || Disposing)
@@ -96,6 +116,8 @@ namespace CefClient
                     return;
                 }
 
+                EnsurePreviewWindowVisible();
+
                 var item = screenshotPanel.Controls
                     .OfType<Panel>()
                     .FirstOrDefault(x => string.Equals(x.Name, GetScreenshotItemName(browserId), StringComparison.OrdinalIgnoreCase));
@@ -106,6 +128,9 @@ namespace CefClient
                     screenshotPanel.Controls.Add(item);
                 }
 
+                var title = item.Controls.OfType<Label>().First();
+                title.Text = $"{browserId}  {DateTime.Now:HH:mm:ss}";
+
                 var pictureBox = item.Controls.OfType<PictureBox>().First();
                 var oldImage = pictureBox.Image;
                 pictureBox.Image = screenshot;
@@ -115,6 +140,19 @@ namespace CefClient
                 if (task.IsFaulted || task.IsCanceled)
                     screenshot.Dispose();
             }, TaskScheduler.Default);
+        }
+
+
+        private void EnsurePreviewWindowVisible()
+        {
+            if (!Visible)
+                Show();
+
+            if (WindowState == FormWindowState.Minimized)
+                WindowState = FormWindowState.Normal;
+
+            BringToFront();
+            Activate();
         }
 
         private static string GetScreenshotItemName(string browserId)

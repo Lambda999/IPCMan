@@ -90,7 +90,14 @@
 
                 var title = await GetPageTitleAsync(Browser);
 
-                await Task.Delay(TimeSpan.FromSeconds(15), cancellationToken);
+                // 页面加载完成后尽快先截一张，避免等到任务结束即将回收浏览器时窗口才更新，
+                // 导致用户几乎看不到 MainForm 上的预览图。后面保留结束前截图用于刷新动态页面最终状态。
+                await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+                var firstScreenshotShown = await TryCaptureAndShowScreenshotAsync(cancellationToken);
+
+                await Task.Delay(TimeSpan.FromSeconds(14), cancellationToken);
+                var finalScreenshotShown = await TryCaptureAndShowScreenshotAsync(cancellationToken);
+                var screenshotShown = firstScreenshotShown || finalScreenshotShown;
 
                 var screenshotShown = await TryCaptureAndShowScreenshotAsync(cancellationToken);
 
@@ -103,7 +110,9 @@
                     {
                         ["title"] = title ?? "",
                         ["url"] = url,
-                        ["screenshotShown"] = screenshotShown
+                        ["screenshotShown"] = screenshotShown,
+                        ["firstScreenshotShown"] = firstScreenshotShown,
+                        ["finalScreenshotShown"] = finalScreenshotShown
                     }
                 };
             }
