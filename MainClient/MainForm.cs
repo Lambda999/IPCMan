@@ -704,18 +704,34 @@ namespace MainClient
 
                         NormalizeDevice(dev, ctx.OS);
 
-                        await session.CreateBrowserAsync(ctx.UniqueId, browserId, innerToken);
-
                         var uvPayload = BuildRunBrowserPayload(ctx, rawTask, dev, consumerId, uvIndex);
-                        await session.RunBrowserNoWaitAsync(
-                            ctx.UniqueId,
-                            browserId,
-                            uvPayload,
-                            innerToken);
 
-                        inFlightBrowsers.TryAdd(browserId, 0);
+                        if (!inFlightBrowsers.TryAdd(browserId, 0))
+                        {
+                            _logger.LogWarning(
+                                "Duplicated in-flight browserId. taskId={TaskId}, browserId={BrowserId}",
+                                ctx.TaskId,
+                                browserId);
+                            continue;
+                        }
+
                         Interlocked.Increment(ref dispatchedUvCount);
                         _ = StartUvTimeoutWatchdogAsync(browserId, innerToken);
+
+                        try
+                        {
+                            await session.RunBrowserNoWaitAsync(
+                                ctx.UniqueId,
+                                browserId,
+                                uvPayload,
+                                innerToken);
+                        }
+                        catch
+                        {
+                            inFlightBrowsers.TryRemove(browserId, out _);
+                            Interlocked.Decrement(ref dispatchedUvCount);
+                            throw;
+                        }
 
                         if (uvIndex < ctx.TotalUV - 1)
                             await Task.Delay(uvIntervalMs, innerToken);
@@ -792,6 +808,12 @@ namespace MainClient
                 ["device"] = JsonNode.Parse(System.Text.Json.JsonSerializer.Serialize(dev)),
                 ["rawTask"] = rawTask.ToString(Newtonsoft.Json.Formatting.None),
                 ["url"] = ctx.Url,
+                // OSR 端用这些短超时防止慢页面长期占住本次 UV，影响后续任务调度。
+                ["loadTimeoutMs"] = 8000,
+                ["firstScreenshotDelayMs"] = 500,
+                ["finalScreenshotDelayMs"] = 1500,
+                ["screenshotTimeoutMs"] = 1500,
+                ["titleTimeoutMs"] = 1000,
             };
         }
 

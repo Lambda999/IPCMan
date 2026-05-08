@@ -8,6 +8,12 @@
 
     public sealed class BrowserSlot : IAsyncDisposable
     {
+        private const int DefaultLoadTimeoutMs = 8000;
+        private const int DefaultFirstScreenshotDelayMs = 500;
+        private const int DefaultFinalScreenshotDelayMs = 1500;
+        private const int DefaultScreenshotTimeoutMs = 1500;
+        private const int DefaultTitleTimeoutMs = 1000;
+
         public string BrowserId { get; }
         public ChromiumWebBrowser Browser { get; }
         public IRequestContext RequestContext { get; }
@@ -26,7 +32,7 @@
             _screenshotReady = screenshotReady;
         }
 
-        private async Task<string> GetPageTitleAsync(ChromiumWebBrowser browser, int timeoutMs = 3000)
+        private async Task<string> GetPageTitleAsync(ChromiumWebBrowser browser, int timeoutMs, CancellationToken cancellationToken)
         {
             if (browser == null || browser.IsDisposed)
                 return "";
@@ -35,6 +41,8 @@
 
             while (sw.ElapsedMilliseconds < timeoutMs)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+
                 if (browser.IsDisposed)
                     return "";
 
@@ -42,16 +50,21 @@
                 {
                     try
                     {
-                        var result = await browser.EvaluateScriptAsync("document.title");
+                        var result = await browser.EvaluateScriptAsync("document.title")
+                            .WaitAsync(TimeSpan.FromMilliseconds(Math.Min(500, timeoutMs)), cancellationToken);
                         return result.Success ? result.Result?.ToString() ?? "" : "";
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
                     }
                     catch
                     {
-                        // 继续等一下再试
+                        // 继续等一下再试，但总等待时间受 timeoutMs 限制。
                     }
                 }
 
-                await Task.Delay(100);
+                await Task.Delay(100, cancellationToken);
             }
 
             return "";
@@ -72,44 +85,64 @@
                     };
                 }
 
-                var ok = await CefHelper.LoadUrlAndWaitAsync(
+                var loadTimeoutMs = GetPositiveInt(payload, "loadTimeoutMs", DefaultLoadTimeoutMs);
+                var firstScreenshotDelayMs = GetPositiveInt(payload, "firstScreenshotDelayMs", DefaultFirstScreenshotDelayMs);
+                var finalScreenshotDelayMs = GetNonNegativeInt(payload, "finalScreenshotDelayMs", DefaultFinalScreenshotDelayMs);
+                var screenshotTimeoutMs = GetPositiveInt(payload, "screenshotTimeoutMs", DefaultScreenshotTimeoutMs);
+                var titleTimeoutMs = GetPositiveInt(payload, "titleTimeoutMs", DefaultTitleTimeoutMs);
+
+                var loadTask = CefHelper.LoadUrlAndWaitAsync(
                     Browser,
                     url,
-                    TimeSpan.FromSeconds(30),
+                    TimeSpan.FromMilliseconds(loadTimeoutMs),
                     cancellationToken);
 
-                if (!ok)
+                // 导航发起后先按短延迟截首屏，不再等完整 load 结束；慢页面也能很快在 MainForm 看到画面。
+                await Task.Delay(TimeSpan.FromMilliseconds(firstScreenshotDelayMs), cancellationToken);
+                var firstScreenshotShown = await TryCaptureAndShowScreenshotAsync(screenshotTimeoutMs, cancellationToken);
+
+                var loadResult = await loadTask;
+                if (loadResult == PageLoadResult.Failed)
                 {
                     return new BrowserRunResult
                     {
                         BrowserId = BrowserId,
                         Success = false,
-                        Message = "页面加载超时"
+                        Message = "页面加载失败",
+                        Data = new JsonObject
+                        {
+                            ["url"] = url,
+                            ["firstScreenshotShown"] = firstScreenshotShown,
+                            ["screenshotShown"] = firstScreenshotShown
+                        }
                     };
                 }
 
-                var title = await GetPageTitleAsync(Browser);
+                // 即使页面一直挂起，也按短超时继续截图并返回，避免一个慢页面阻塞后续 UV/任务。
+                var title = await GetPageTitleAsync(Browser, titleTimeoutMs, cancellationToken);
 
-                // 页面加载完成后尽快先截一张，避免等到任务结束即将回收浏览器时窗口才更新，
-                // 导致用户几乎看不到 MainForm 上的预览图。后面保留结束前截图用于刷新动态页面最终状态。
-                await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
-                var firstScreenshotShown = await TryCaptureAndShowScreenshotAsync(cancellationToken);
+                var finalScreenshotShown = false;
+                if (finalScreenshotDelayMs > 0)
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(finalScreenshotDelayMs), cancellationToken);
+                    finalScreenshotShown = await TryCaptureAndShowScreenshotAsync(screenshotTimeoutMs, cancellationToken);
+                }
 
-                await Task.Delay(TimeSpan.FromSeconds(14), cancellationToken);
-                var finalScreenshotShown = await TryCaptureAndShowScreenshotAsync(cancellationToken);
                 var screenshotShown = firstScreenshotShown || finalScreenshotShown;
-
-                var screenshotShown = await TryCaptureAndShowScreenshotAsync(cancellationToken);
+                var loadCompleted = loadResult == PageLoadResult.Completed;
 
                 return new BrowserRunResult
                 {
                     BrowserId = BrowserId,
                     Success = true,
-                    Message = "执行成功",
+                    Message = loadCompleted ? "执行成功" : "页面加载较慢，已按超时继续",
                     Data = new JsonObject
                     {
                         ["title"] = title ?? "",
                         ["url"] = url,
+                        ["loadCompleted"] = loadCompleted,
+                        ["loadTimedOut"] = loadResult == PageLoadResult.TimedOut,
+                        ["loadTimeoutMs"] = loadTimeoutMs,
                         ["screenshotShown"] = screenshotShown,
                         ["firstScreenshotShown"] = firstScreenshotShown,
                         ["finalScreenshotShown"] = finalScreenshotShown
@@ -136,15 +169,15 @@
             }
         }
 
-
-        private async Task<bool> TryCaptureAndShowScreenshotAsync(CancellationToken cancellationToken)
+        private async Task<bool> TryCaptureAndShowScreenshotAsync(int timeoutMs, CancellationToken cancellationToken)
         {
             if (Browser.IsDisposed)
                 return false;
 
             try
             {
-                using var bitmap = await Browser.ScreenshotAsync(ignoreExistingScreenshot: true);
+                using var bitmap = await Browser.ScreenshotAsync(ignoreExistingScreenshot: true)
+                    .WaitAsync(TimeSpan.FromMilliseconds(timeoutMs), cancellationToken);
                 cancellationToken.ThrowIfCancellationRequested();
 
                 if (bitmap == null)
@@ -163,6 +196,30 @@
             }
         }
 
+        private static int GetPositiveInt(JsonNode? payload, string name, int defaultValue)
+        {
+            var value = GetNullableInt(payload, name);
+            return value.HasValue && value.Value > 0 ? value.Value : defaultValue;
+        }
+
+        private static int GetNonNegativeInt(JsonNode? payload, string name, int defaultValue)
+        {
+            var value = GetNullableInt(payload, name);
+            return value.HasValue && value.Value >= 0 ? value.Value : defaultValue;
+        }
+
+        private static int? GetNullableInt(JsonNode? payload, string name)
+        {
+            try
+            {
+                return payload?[name]?.GetValue<int>();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
         /// <summary>
         /// 离屏浏览器没有 WinForms 承载控件，这里保留原调用点以保持外部流程不变。
         /// </summary>
@@ -178,6 +235,14 @@
         {
             if (Interlocked.Exchange(ref _disposed, 1) != 0)
                 return;
+
+            try
+            {
+                Browser.Stop();
+            }
+            catch
+            {
+            }
 
             try
             {

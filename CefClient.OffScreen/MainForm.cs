@@ -72,11 +72,16 @@ namespace CefClient
         {
             if (!_slots.TryGetValue(browserId, out var slot))
             {
+                await CreateBrowserAsync(browserId, cancellationToken);
+            }
+
+            if (!_slots.TryGetValue(browserId, out slot))
+            {
                 return new BrowserRunResult
                 {
                     BrowserId = browserId,
                     Success = false,
-                    Message = "browserId 不存在"
+                    Message = "browserId 创建失败"
                 };
             }
 
@@ -214,13 +219,31 @@ namespace CefClient
 
         public async Task RemoveAllBrowsersAsync()
         {
+            var disposeTasks = new List<Task>();
             foreach (var kv in _slots.ToArray())
             {
                 if (_slots.TryRemove(kv.Key, out var slot))
                 {
-                    await slot.DisposeAsync();
+                    disposeTasks.Add(Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await slot.DisposeHeavyAsync();
+                        }
+                        catch
+                        {
+                        }
+                    }));
                 }
             }
+
+            if (disposeTasks.Count == 0)
+                return;
+
+            var all = Task.WhenAll(disposeTasks);
+            var finished = await Task.WhenAny(all, Task.Delay(TimeSpan.FromSeconds(2)));
+            if (finished == all)
+                await all;
         }
 
         private Task UiInvokeAsync(Action action, CancellationToken cancellationToken = default)
