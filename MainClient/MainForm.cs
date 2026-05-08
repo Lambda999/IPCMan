@@ -156,6 +156,7 @@ namespace MainClient
             numericUpDown_Multiple.Value = _appSettings.Multiple;
             numericUpDown_MainResetTimeout.Value = _appSettings.MainResetTimeout;
             checkBox_IsHiddenMode.Checked = _appSettings.IsHiddenMode;
+            checkBox_IsOsrMode.Checked = _appSettings.IsOsrMode;
             checkBox_IsProxyMode.Checked = _appSettings.IsProxyMode;
 
             numericUpDown_IpTtl.Value = _appSettings.IpTtl;
@@ -177,6 +178,7 @@ namespace MainClient
                 _appSettings.Multiple = (int)numericUpDown_Multiple.Value;
                 _appSettings.MainResetTimeout = (int)numericUpDown_MainResetTimeout.Value;
                 _appSettings.IsHiddenMode = checkBox_IsHiddenMode.Checked;
+                _appSettings.IsOsrMode = checkBox_IsOsrMode.Checked;
                 _appSettings.IsProxyMode = checkBox_IsProxyMode.Checked;
                 _appSettings.IpTtl = (int)numericUpDown_IpTtl.Value;
                 _appSettings.UVInterval = (int)numericUpDown_UVInterval.Value;
@@ -520,10 +522,18 @@ namespace MainClient
         {
             ctx.UniqueId = Guid.NewGuid().ToString("D");
 
+            var cefProcessDirectory = _appSettings.IsOsrMode ? "CefClient.OffScreen" : "CefClient";
+            var cefProcessFileName = _appSettings.IsOsrMode ? "CefClient.OffScreen.exe" : "CefClient.exe";
             var cefExePath = Path.Combine(
                 AppDomain.CurrentDomain.BaseDirectory,
-                "CefClient",
-                "CefClient.exe");
+                cefProcessDirectory,
+                cefProcessFileName);
+
+            _logger.LogInformation(
+                "Use {CefProcessFileName} for taskId={TaskId}, osrMode={IsOsrMode}",
+                cefProcessFileName,
+                ctx.TaskId,
+                _appSettings.IsOsrMode);
 
             await using var session = new CefClientSession(cefExePath, TimeSpan.FromSeconds(15));
 
