@@ -14,6 +14,7 @@
         private const int DefaultFinalScreenshotDelayMs = 1500;
         private const int DefaultScreenshotTimeoutMs = 1500;
         private const int DefaultTitleTimeoutMs = 1000;
+        private const int DefaultBrowserInitTimeoutMs = 5000;
 
         public string BrowserId { get; }
         private readonly Action<string, Image> _screenshotReady;
@@ -104,6 +105,7 @@
                 {
                     Size = new Size(sw, sh)
                 };
+                await WaitForBrowserInitializedAsync(browser, DefaultBrowserInitTimeoutMs, cancellationToken);
                 using var devToolsClient = browser.GetDevToolsClient();
 
                 await devToolsClient.Storage.ClearDataForOriginAsync("*", "cache_storage,cookies,local_storage");
@@ -195,6 +197,45 @@
                     Success = false,
                     Message = ex.Message
                 };
+            }
+        }
+
+
+        private static async Task WaitForBrowserInitializedAsync(ChromiumWebBrowser browser, int timeoutMs, CancellationToken cancellationToken)
+        {
+            if (browser.IsDisposed)
+                throw new ObjectDisposedException(nameof(ChromiumWebBrowser));
+
+            if (browser.IsBrowserInitialized)
+                return;
+
+            var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            EventHandler? handler = null;
+
+            handler = (_, _) =>
+            {
+                if (browser.IsBrowserInitialized)
+                    tcs.TrySetResult();
+            };
+
+            browser.IsBrowserInitializedChanged += handler;
+
+            try
+            {
+                if (browser.IsBrowserInitialized)
+                    return;
+
+                using var timeoutCts = new CancellationTokenSource(TimeSpan.FromMilliseconds(timeoutMs));
+                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+                await tcs.Task.WaitAsync(linkedCts.Token);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                throw new TimeoutException("离屏浏览器初始化超时");
+            }
+            finally
+            {
+                browser.IsBrowserInitializedChanged -= handler;
             }
         }
 
