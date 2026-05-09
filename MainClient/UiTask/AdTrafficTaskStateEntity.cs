@@ -7,6 +7,7 @@
         public long DSP;
         public long Clickthrough;
         public long Success;
+        public long Error;
         public long Failure;
         public long Complete;
 
@@ -42,6 +43,10 @@
 
                 case AdTrafficTaskStateKind.Success:
                     Interlocked.Add(ref Success, count);
+                    break;
+
+                case AdTrafficTaskStateKind.Error:
+                    Interlocked.Add(ref Error, count);
                     break;
 
                 case AdTrafficTaskStateKind.Failure:

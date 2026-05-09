@@ -461,6 +461,12 @@ namespace MainClient
             };
             session.OnBrowserStatus += status =>
             {
+                if (!string.IsNullOrWhiteSpace(status.TaskId) &&
+                    !string.Equals(status.TaskId, ctx.UniqueId, StringComparison.OrdinalIgnoreCase))
+                {
+                    return Task.CompletedTask;
+                }
+
                 var stage = status.Data?["stage"]?.GetValue<string>() ?? "unknown";
                 var browserId = status.BrowserId ?? string.Empty;
                 _logger.LogInformation(
@@ -470,6 +476,17 @@ namespace MainClient
                     stage,
                     status.Success,
                     status.Message);
+
+                if (TryMapBrowserStatusToTaskState(stage, out var state))
+                {
+                    var count = status.Data?["count"]?.GetValue<int?>() ?? 1;
+                    _aggregator.EnqueueTaskState(new AdTrafficTaskStateEvent(
+                        ctx.TaskId,
+                        state,
+                        Math.Max(1, count),
+                        status.Data?.ToJsonString()));
+                }
+
                 return Task.CompletedTask;
             };
 
@@ -782,6 +799,41 @@ namespace MainClient
             }
         }
 
+
+
+        private static bool TryMapBrowserStatusToTaskState(string? stage, out AdTrafficTaskStateKind state)
+        {
+            switch (stage?.Trim().ToLowerInvariant())
+            {
+                case "start":
+                    state = AdTrafficTaskStateKind.Start;
+                    return true;
+                case "dsp":
+                    state = AdTrafficTaskStateKind.DSP;
+                    return true;
+                case "click":
+                    state = AdTrafficTaskStateKind.Clickthrough;
+                    return true;
+                case "success":
+                    state = AdTrafficTaskStateKind.Success;
+                    return true;
+                case "error":
+                    state = AdTrafficTaskStateKind.Error;
+                    return true;
+                case "failure":
+                    state = AdTrafficTaskStateKind.Failure;
+                    return true;
+                case "complete":
+                    state = AdTrafficTaskStateKind.Complete;
+                    return true;
+                case "x5sec":
+                    state = AdTrafficTaskStateKind.X5Sec;
+                    return true;
+                default:
+                    state = default;
+                    return false;
+            }
+        }
 
         private JsonObject BuildStartPayload(ConsumerTaskContext ctx, JsonNode rawTask)
         {

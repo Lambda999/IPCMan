@@ -30,6 +30,7 @@ public sealed class PipeHostService : IAsyncDisposable
         _pipeName = pipeName;
         _mainForm = mainForm;
         _mainForm.BrowserLog += message => _ = SendBrowserLogSafeAsync(message);
+        _mainForm.BrowserStatus += SendBrowserStatusSafeAsync;
     }
 
 
@@ -38,6 +39,23 @@ public sealed class PipeHostService : IAsyncDisposable
         try
         {
             await SendLogAsync(message, CancellationToken.None);
+        }
+        catch
+        {
+        }
+    }
+
+    private async Task SendBrowserStatusSafeAsync(string browserId, BrowserRunStatus status, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await SendBrowserStatusAsync(
+                browserId,
+                status.Stage,
+                status.Success,
+                status.Message,
+                cancellationToken,
+                status.Data);
         }
         catch
         {

@@ -1,4 +1,4 @@
-using CefSharp;
+﻿using CefSharp;
 using CefSharp.OffScreen;
 using System.Collections.Concurrent;
 using System.Drawing;
@@ -13,6 +13,7 @@ namespace CefClient
         private readonly ConcurrentDictionary<string, BrowserSlot> _slots = new();
 
         public event Action<string>? BrowserLog;
+        public event Func<string, BrowserRunStatus, CancellationToken, Task>? BrowserStatus;
 
         public MainForm()
         {
@@ -43,7 +44,7 @@ namespace CefClient
             CancellationToken cancellationToken = default)
         {
             ShowBrowserPlaceholder(browserId);
-            var slot = new BrowserSlot(browserId, ShowBrowserScreenshot, WriteBrowserLog);
+            var slot = new BrowserSlot(browserId, ShowBrowserScreenshot, WriteBrowserLog, PublishBrowserStatusAsync);
             return await slot.RunAsync(payload, cancellationToken);
         }
 
@@ -51,6 +52,11 @@ namespace CefClient
         private void WriteBrowserLog(string message)
         {
             BrowserLog?.Invoke(message);
+        }
+
+        private Task PublishBrowserStatusAsync(BrowserRunStatus status, CancellationToken cancellationToken)
+        {
+            return BrowserStatus?.Invoke(status.BrowserId, status, cancellationToken) ?? Task.CompletedTask;
         }
 
         private void ShowBrowserPlaceholder(string browserId)
