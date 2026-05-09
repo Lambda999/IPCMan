@@ -1,4 +1,4 @@
-﻿using CefSharp;
+using CefSharp;
 using CefSharp.OffScreen;
 using System.Windows.Forms;
 
@@ -15,9 +15,13 @@ namespace CefClient
                 .FirstOrDefault(x => x.StartsWith("--pipe-name=", StringComparison.OrdinalIgnoreCase))
                 ?.Substring("--pipe-name=".Length);
 
+            var userDataRoot = Path.Combine(AppContext.BaseDirectory, "User Data");
+            Directory.CreateDirectory(userDataRoot);
+
             var settings = new CefSharp.OffScreen.CefSettings
             {
-                 BrowserSubprocessPath = defaultSubprocessPath
+                 BrowserSubprocessPath = defaultSubprocessPath,
+                 RootCachePath = userDataRoot
             };
 
             settings.CefCommandLineArgs.Add("enable-media-stream");

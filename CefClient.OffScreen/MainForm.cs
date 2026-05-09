@@ -1,4 +1,4 @@
-﻿using CefSharp;
+using CefSharp;
 using CefSharp.OffScreen;
 using System.Collections.Concurrent;
 using System.Drawing;
@@ -12,6 +12,8 @@ namespace CefClient
         private static readonly Size BrowserViewportSize = new(420, 920);
         private readonly ConcurrentDictionary<string, BrowserSlot> _slots = new();
 
+        public event Action<string>? BrowserLog;
+
         public MainForm()
         {
             InitializeComponent();
@@ -24,45 +26,10 @@ namespace CefClient
            // BeginInvoke(new Action(Hide));
         }
 
-        public async Task<bool> CreateBrowserAsync(string browserId, CancellationToken cancellationToken = default)
+        public Task<bool> CreateBrowserAsync(string browserId, CancellationToken cancellationToken = default)
         {
-            if (_slots.ContainsKey(browserId))
-                return true;
-
-            var slot = await UiInvokeAsync(() =>
-            {
-                var cacheRoot = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "CefSharp",
-                    "TaskSlots",
-                    $"proc_{Environment.ProcessId}");
-
-                Directory.CreateDirectory(cacheRoot);
-
-                var cachePath = Path.Combine(cacheRoot, browserId);
-                Directory.CreateDirectory(cachePath);
-
-                var requestContext = new RequestContext(new RequestContextSettings
-                {
-                    CachePath = cachePath,
-                    PersistSessionCookies = false,
-                });
-
-                var browser = new ChromiumWebBrowser(
-                    "about:blank",
-                    requestContext: requestContext)
-                {
-                    Size = BrowserViewportSize
-                };
-
-                return new BrowserSlot(browserId, browser, requestContext, ShowBrowserScreenshot);
-            }, cancellationToken);
-
-            var added = _slots.TryAdd(browserId, slot);
-            if (added)
-                ShowBrowserPlaceholder(browserId);
-
-            return added;
+            // OSR 模式不预创建浏览器；每次 RunBrowserAsync 都会创建一次性 BrowserSlot 并在 RunAsync 内释放。
+            return Task.FromResult(true);
         }
 
         public async Task<BrowserRunResult> RunBrowserAsync(
@@ -70,25 +37,16 @@ namespace CefClient
             JsonNode? payload,
             CancellationToken cancellationToken = default)
         {
-            if (!_slots.TryGetValue(browserId, out var slot))
-            {
-                await CreateBrowserAsync(browserId, cancellationToken);
-            }
-
-            if (!_slots.TryGetValue(browserId, out slot))
-            {
-                return new BrowserRunResult
-                {
-                    BrowserId = browserId,
-                    Success = false,
-                    Message = "browserId 创建失败"
-                };
-            }
-
+            ShowBrowserPlaceholder(browserId);
+            var slot = new BrowserSlot(browserId, ShowBrowserScreenshot, WriteBrowserLog);
             return await slot.RunAsync(payload, cancellationToken);
         }
 
 
+        private void WriteBrowserLog(string message)
+        {
+            BrowserLog?.Invoke(message);
+        }
 
         private void ShowBrowserPlaceholder(string browserId)
         {
