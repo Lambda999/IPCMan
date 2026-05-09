@@ -1,5 +1,6 @@
 using CefSharp;
 using CefSharp.OffScreen;
+using System;
 using System.Windows.Forms;
 
 namespace CefClient
@@ -10,10 +11,17 @@ namespace CefClient
         public static int Main(string[] args)
         {
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
-            var defaultSubprocessPath = Path.Combine(AppContext.BaseDirectory, "CefSharp.BrowserSubprocess.exe");
+
             var pipeName = args
-                .FirstOrDefault(x => x.StartsWith("--pipe-name=", StringComparison.OrdinalIgnoreCase))
-                ?.Substring("--pipe-name=".Length);
+            .FirstOrDefault(x => x.StartsWith("--pipe-name=", StringComparison.OrdinalIgnoreCase))
+            ?.Substring("--pipe-name=".Length);
+
+            var defaultSubprocessPath = Path.Combine(AppContext.BaseDirectory, "CefSharp.BrowserSubprocess.exe");
+
+            var rootCachePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "User Data");
+
+            var userDataRoot = Path.Combine(AppContext.BaseDirectory, "User Data");
+            Directory.CreateDirectory(userDataRoot);
 
             var userDataRoot = Path.Combine(AppContext.BaseDirectory, "User Data");
             Directory.CreateDirectory(userDataRoot);
