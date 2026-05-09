@@ -1,4 +1,4 @@
-﻿using CefSharp;
+using CefSharp;
 using CefSharp.OffScreen;
 using System.Windows.Forms;
 

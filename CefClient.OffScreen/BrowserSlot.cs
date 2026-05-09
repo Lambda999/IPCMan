@@ -1,6 +1,6 @@
-﻿namespace CefClient
+namespace CefClient
 {
-    using CefClient.Common;
+    using CefClient.Handler;
     using CefSharp;
     using CefSharp.OffScreen;
     using System;
@@ -15,15 +15,21 @@
         private const int DefaultFinalScreenshotDelayMs = 1500;
         private const int DefaultScreenshotTimeoutMs = 1500;
         private const int DefaultTitleTimeoutMs = 1000;
+        private const int DefaultInitialLoadTimeoutMs = 5000;
 
         public string BrowserId { get; }
         private readonly Action<string, Image> _screenshotReady;
+        private readonly Action<string> _log;
         private int _disposed;
 
-        public BrowserSlot(string browserId, Action<string, Image> screenshotReady)
+        public BrowserSlot(
+            string browserId,
+            Action<string, Image> screenshotReady,
+            Action<string> log)
         {
             BrowserId = browserId;
             _screenshotReady = screenshotReady;
+            _log = log;
         }
 
         private async Task<string> GetPageTitleAsync(ChromiumWebBrowser browser, int timeoutMs, CancellationToken cancellationToken)
@@ -82,13 +88,10 @@
             var cachePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "User Data", consumerId, uvIndex);
             Directory.CreateDirectory(cachePath);
 
-
             var os = GetNullableInt(payload, "os") ?? 0;
             var device = payload?["device"];
             var sw = GetNullableInt(device, "sw") ?? 412;
             var sh = GetNullableInt(device, "sh") ?? 915;
-            var deviceProfile = AndroidViewportMatcher.Match(sw, sh);
-
 
             var browserSettings = new BrowserSettings
             {
@@ -106,16 +109,17 @@
                 using var requestContext = new RequestContext(requestContextSettings);
                 using var browser = new ChromiumWebBrowser("about:blank", browserSettings, requestContext)
                 {
-                    Size = new Size(deviceProfile.CssWidth, deviceProfile.CssHeight)
+                    Size = new Size(sw, sh),
+                    RequestHandler = new ExternalProtocolRequestHandler(message => _log($"{BrowserId}: {message}"))
                 };
-
-                await browser.WaitForInitialLoadAsync();
+                await browser.WaitForInitialLoadAsync()
+                    .WaitAsync(TimeSpan.FromMilliseconds(DefaultInitialLoadTimeoutMs), cancellationToken);
                 using var devToolsClient = browser.GetDevToolsClient();
+
                 await devToolsClient.Storage.ClearDataForOriginAsync("*", "cache_storage,cookies,local_storage");
                 await devToolsClient.Emulation.SetTouchEmulationEnabledAsync(true, Random.Shared.Next(4, 6));
-                await devToolsClient.Emulation.SetDeviceMetricsOverrideAsync(width: deviceProfile.CssWidth, height: deviceProfile.CssHeight, deviceScaleFactor: deviceProfile.DeviceScaleFactor, mobile: true);
+                await devToolsClient.Emulation.SetDeviceMetricsOverrideAsync(width: sw, height: sh, deviceScaleFactor: 1, mobile: true);
                 await devToolsClient.Emulation.SetUserAgentOverrideAsync(userAgent: payload?["userAgent"]?.ToString() ?? string.Empty, platform: os == 1 ? "Android" : "iPhone");
-
 
                 var loadTimeoutMs = GetPositiveInt(payload, "loadTimeoutMs", DefaultLoadTimeoutMs);
                 var firstScreenshotDelayMs = GetPositiveInt(payload, "firstScreenshotDelayMs", DefaultFirstScreenshotDelayMs);
@@ -203,6 +207,7 @@
                 };
             }
         }
+
 
         private async Task<bool> TryCaptureAndShowScreenshotAsync(ChromiumWebBrowser browser, int timeoutMs, CancellationToken cancellationToken)
         {

@@ -12,6 +12,8 @@ namespace CefClient
         private static readonly Size BrowserViewportSize = new(420, 920);
         private readonly ConcurrentDictionary<string, BrowserSlot> _slots = new();
 
+        public event Action<string>? BrowserLog;
+
         public MainForm()
         {
             InitializeComponent();
@@ -36,11 +38,15 @@ namespace CefClient
             CancellationToken cancellationToken = default)
         {
             ShowBrowserPlaceholder(browserId);
-            var slot = new BrowserSlot(browserId, ShowBrowserScreenshot);
+            var slot = new BrowserSlot(browserId, ShowBrowserScreenshot, WriteBrowserLog);
             return await slot.RunAsync(payload, cancellationToken);
         }
 
 
+        private void WriteBrowserLog(string message)
+        {
+            BrowserLog?.Invoke(message);
+        }
 
         private void ShowBrowserPlaceholder(string browserId)
         {
