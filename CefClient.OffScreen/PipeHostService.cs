@@ -1,4 +1,4 @@
-﻿using System.IO.Pipes;
+using System.IO.Pipes;
 using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
@@ -174,34 +174,18 @@ public sealed class PipeHostService : IAsyncDisposable
                     data: result.Data);
             }
 
-            try
-            {
-                await _mainForm.RemoveBrowserFastAsync(browserId);
-                var dataObj = result.Data as System.Text.Json.Nodes.JsonObject ?? new System.Text.Json.Nodes.JsonObject();
-                dataObj["removedByCefClient"] = true;
-                result.Data = dataObj;
-                await SendBrowserStatusAsync(
-                    browserId,
-                    stage: "removed",
-                    success: true,
-                    message: "browser removed by cefclient",
-                    cancellationToken: CancellationToken.None,
-                    data: result.Data);
-            }
-            catch (Exception ex)
-            {
-                var dataObj = result.Data as System.Text.Json.Nodes.JsonObject ?? new System.Text.Json.Nodes.JsonObject();
-                dataObj["removedByCefClient"] = false;
-                dataObj["removeError"] = ex.Message;
-                result.Data = dataObj;
-                await SendBrowserStatusAsync(
-                    browserId,
-                    stage: "removeFailed",
-                    success: false,
-                    message: ex.Message,
-                    cancellationToken: CancellationToken.None,
-                    data: result.Data);
-            }
+            var dataObj = result.Data as System.Text.Json.Nodes.JsonObject ?? new System.Text.Json.Nodes.JsonObject();
+            dataObj["removedByCefClient"] = true;
+            dataObj["osrOneShot"] = true;
+            dataObj["disposedByRunAsync"] = true;
+            result.Data = dataObj;
+            await SendBrowserStatusAsync(
+                browserId,
+                stage: "disposed",
+                success: true,
+                message: "osr browser disposed by RunAsync",
+                cancellationToken: CancellationToken.None,
+                data: result.Data);
 
             await SendAsync(new PipeEnvelope
             {
