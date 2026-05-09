@@ -2,6 +2,7 @@
 {
     using CefSharp;
     using CefSharp.OffScreen;
+    using System;
     using System.Diagnostics;
     using System.Drawing;
     using System.Text.Json.Nodes;
@@ -72,6 +73,62 @@
 
         public async Task<BrowserRunResult> RunAsync(JsonNode? payload, CancellationToken cancellationToken = default)
         {
+ 
+
+
+            //var cacheRoot = Path.Combine(
+            //       Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            //       "CefSharp",
+            //       "TaskSlots",
+            //      $"proc_{Environment.ProcessId}");
+
+            //Directory.CreateDirectory(cacheRoot);
+
+            //var cachePath = Path.Combine(cacheRoot, browserId);
+            //Directory.CreateDirectory(cachePath);
+
+
+            // ["taskId"] = ctx.UniqueId,
+            //    ["taskTitle"] = ctx.TaskTitle ?? "",
+            //     ["uvIndex"] = uvIndex,
+            //     ["uv"] = uvIndex + 1,
+            //    ["consumerId"] = consumerId,
+
+            var consumerId = payload?["consumerId"]?.GetValue<string>();
+            var uvIndex = payload?["uvIndex"]?.GetValue<string>();
+            var cachePath = System.IO.Path.Combine(System.AppDomain.CurrentDomain.BaseDirectory, "User Data", consumerId!, uvIndex!);
+            var os = payload?["os"]?.GetValue<int>();
+            var device = payload?["device"];
+            //device
+            var sw = device?["sw"]?.GetValue<int>() ?? 412;
+            var sh = device?["sh"]?.GetValue<int>() ?? 915;
+            var browserSettings = new BrowserSettings()
+            {
+                WindowlessFrameRate = 1,
+            };
+
+            var requestContextSettings = new RequestContextSettings
+            {
+                PersistSessionCookies = true,
+                CachePath = cachePath
+            };
+            using (var requestContext = new RequestContext(requestContextSettings))
+            {
+                using (var browser = new ChromiumWebBrowser("about:blank", browserSettings, requestContext))
+                {
+                    using (var devToolsClient = browser.GetDevToolsClient())
+                    {
+                        await devToolsClient.Storage.ClearDataForOriginAsync("*", "cache_storage,cookies,local_storage");
+                        await devToolsClient.Emulation.SetTouchEmulationEnabledAsync(true, new Random().Next(4, 6));
+                        await devToolsClient.Emulation.SetDeviceMetricsOverrideAsync(width: sw, height: sh, deviceScaleFactor: 1, mobile: true);
+                        await devToolsClient.Emulation.SetUserAgentOverrideAsync(userAgent: cachePath, platform: os == 1 ? "Android" : "iPhone");
+                    }
+                }
+            }
+
+
+
+
             try
             {
                 var url = payload?["url"]?.ToString();
