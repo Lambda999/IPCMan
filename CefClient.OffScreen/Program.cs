@@ -23,6 +23,9 @@ namespace CefClient
             var userDataRoot = Path.Combine(AppContext.BaseDirectory, "User Data");
             Directory.CreateDirectory(userDataRoot);
 
+            var userDataRoot = Path.Combine(AppContext.BaseDirectory, "User Data");
+            Directory.CreateDirectory(userDataRoot);
+
             var settings = new CefSharp.OffScreen.CefSettings
             {
                  BrowserSubprocessPath = defaultSubprocessPath,
