@@ -1,5 +1,6 @@
-﻿namespace CefClient
+namespace CefClient
 {
+    using CefClient.Handler;
     using CefSharp;
     using CefSharp.OffScreen;
     using System;
@@ -14,23 +15,21 @@
         private const int DefaultFinalScreenshotDelayMs = 1500;
         private const int DefaultScreenshotTimeoutMs = 1500;
         private const int DefaultTitleTimeoutMs = 1000;
+        private const int DefaultInitialLoadTimeoutMs = 5000;
 
         public string BrowserId { get; }
-        public ChromiumWebBrowser Browser { get; }
-        public IRequestContext RequestContext { get; }
         private readonly Action<string, Image> _screenshotReady;
+        private readonly Action<string> _log;
         private int _disposed;
 
         public BrowserSlot(
             string browserId,
-            ChromiumWebBrowser browser,
-            IRequestContext requestContext,
-            Action<string, Image> screenshotReady)
+            Action<string, Image> screenshotReady,
+            Action<string> log)
         {
             BrowserId = browserId;
-            Browser = browser;
-            RequestContext = requestContext;
             _screenshotReady = screenshotReady;
+            _log = log;
         }
 
         private async Task<string> GetPageTitleAsync(ChromiumWebBrowser browser, int timeoutMs, CancellationToken cancellationToken)
@@ -73,36 +72,28 @@
 
         public async Task<BrowserRunResult> RunAsync(JsonNode? payload, CancellationToken cancellationToken = default)
         {
- 
+            var url = payload?["url"]?.ToString();
+            if (string.IsNullOrWhiteSpace(url))
+            {
+                return new BrowserRunResult
+                {
+                    BrowserId = BrowserId,
+                    Success = false,
+                    Message = "url 不能为空"
+                };
+            }
 
+            var consumerId = payload?["consumerId"]?.ToString() ?? "unknown";
+            var uvIndex = payload?["uvIndex"]?.ToString() ?? BrowserId;
+            var cachePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "User Data", consumerId, uvIndex);
+            Directory.CreateDirectory(cachePath);
 
-            //var cacheRoot = Path.Combine(
-            //       Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            //       "CefSharp",
-            //       "TaskSlots",
-            //      $"proc_{Environment.ProcessId}");
-
-            //Directory.CreateDirectory(cacheRoot);
-
-            //var cachePath = Path.Combine(cacheRoot, browserId);
-            //Directory.CreateDirectory(cachePath);
-
-
-            // ["taskId"] = ctx.UniqueId,
-            //    ["taskTitle"] = ctx.TaskTitle ?? "",
-            //     ["uvIndex"] = uvIndex,
-            //     ["uv"] = uvIndex + 1,
-            //    ["consumerId"] = consumerId,
-
-            var consumerId = payload?["consumerId"]?.GetValue<string>();
-            var uvIndex = payload?["uvIndex"]?.GetValue<string>();
-            var cachePath = System.IO.Path.Combine(System.AppDomain.CurrentDomain.BaseDirectory, "User Data", consumerId!, uvIndex!);
-            var os = payload?["os"]?.GetValue<int>();
+            var os = GetNullableInt(payload, "os") ?? 0;
             var device = payload?["device"];
-            //device
-            var sw = device?["sw"]?.GetValue<int>() ?? 412;
-            var sh = device?["sh"]?.GetValue<int>() ?? 915;
-            var browserSettings = new BrowserSettings()
+            var sw = GetNullableInt(device, "sw") ?? 412;
+            var sh = GetNullableInt(device, "sh") ?? 915;
+
+            var browserSettings = new BrowserSettings
             {
                 WindowlessFrameRate = 1,
             };
@@ -112,35 +103,23 @@
                 PersistSessionCookies = true,
                 CachePath = cachePath
             };
-            using (var requestContext = new RequestContext(requestContextSettings))
-            {
-                using (var browser = new ChromiumWebBrowser("about:blank", browserSettings, requestContext))
-                {
-                    using (var devToolsClient = browser.GetDevToolsClient())
-                    {
-                        await devToolsClient.Storage.ClearDataForOriginAsync("*", "cache_storage,cookies,local_storage");
-                        await devToolsClient.Emulation.SetTouchEmulationEnabledAsync(true, new Random().Next(4, 6));
-                        await devToolsClient.Emulation.SetDeviceMetricsOverrideAsync(width: sw, height: sh, deviceScaleFactor: 1, mobile: true);
-                        await devToolsClient.Emulation.SetUserAgentOverrideAsync(userAgent: cachePath, platform: os == 1 ? "Android" : "iPhone");
-                    }
-                }
-            }
-
-
-
 
             try
             {
-                var url = payload?["url"]?.ToString();
-                if (string.IsNullOrWhiteSpace(url))
+                using var requestContext = new RequestContext(requestContextSettings);
+                using var browser = new ChromiumWebBrowser("about:blank", browserSettings, requestContext)
                 {
-                    return new BrowserRunResult
-                    {
-                        BrowserId = BrowserId,
-                        Success = false,
-                        Message = "url 不能为空"
-                    };
-                }
+                    Size = new Size(sw, sh),
+                    RequestHandler = new ExternalProtocolRequestHandler(message => _log($"{BrowserId}: {message}"))
+                };
+                await browser.WaitForInitialLoadAsync()
+                    .WaitAsync(TimeSpan.FromMilliseconds(DefaultInitialLoadTimeoutMs), cancellationToken);
+                using var devToolsClient = browser.GetDevToolsClient();
+
+                await devToolsClient.Storage.ClearDataForOriginAsync("*", "cache_storage,cookies,local_storage");
+                await devToolsClient.Emulation.SetTouchEmulationEnabledAsync(true, Random.Shared.Next(4, 6));
+                await devToolsClient.Emulation.SetDeviceMetricsOverrideAsync(width: sw, height: sh, deviceScaleFactor: 1, mobile: true);
+                await devToolsClient.Emulation.SetUserAgentOverrideAsync(userAgent: payload?["userAgent"]?.ToString() ?? string.Empty, platform: os == 1 ? "Android" : "iPhone");
 
                 var loadTimeoutMs = GetPositiveInt(payload, "loadTimeoutMs", DefaultLoadTimeoutMs);
                 var firstScreenshotDelayMs = GetPositiveInt(payload, "firstScreenshotDelayMs", DefaultFirstScreenshotDelayMs);
@@ -149,14 +128,14 @@
                 var titleTimeoutMs = GetPositiveInt(payload, "titleTimeoutMs", DefaultTitleTimeoutMs);
 
                 var loadTask = CefHelper.LoadUrlAndWaitAsync(
-                    Browser,
+                    browser,
                     url,
                     TimeSpan.FromMilliseconds(loadTimeoutMs),
                     cancellationToken);
 
-                // 导航发起后先按短延迟截首屏，不再等完整 load 结束；慢页面也能很快在 MainForm 看到画面。
+                // OSR 模式每次 runBrowser 都是一次性浏览：创建、浏览、截图、返回后由 using 自动释放。
                 await Task.Delay(TimeSpan.FromMilliseconds(firstScreenshotDelayMs), cancellationToken);
-                var firstScreenshotShown = await TryCaptureAndShowScreenshotAsync(screenshotTimeoutMs, cancellationToken);
+                var firstScreenshotShown = await TryCaptureAndShowScreenshotAsync(browser, screenshotTimeoutMs, cancellationToken);
 
                 var loadResult = await loadTask;
                 if (loadResult == PageLoadResult.Failed)
@@ -170,19 +149,20 @@
                         {
                             ["url"] = url,
                             ["firstScreenshotShown"] = firstScreenshotShown,
-                            ["screenshotShown"] = firstScreenshotShown
+                            ["screenshotShown"] = firstScreenshotShown,
+                            ["osrOneShot"] = true,
+                            ["disposedByRunAsync"] = true
                         }
                     };
                 }
 
-                // 即使页面一直挂起，也按短超时继续截图并返回，避免一个慢页面阻塞后续 UV/任务。
-                var title = await GetPageTitleAsync(Browser, titleTimeoutMs, cancellationToken);
+                var title = await GetPageTitleAsync(browser, titleTimeoutMs, cancellationToken);
 
                 var finalScreenshotShown = false;
                 if (finalScreenshotDelayMs > 0)
                 {
                     await Task.Delay(TimeSpan.FromMilliseconds(finalScreenshotDelayMs), cancellationToken);
-                    finalScreenshotShown = await TryCaptureAndShowScreenshotAsync(screenshotTimeoutMs, cancellationToken);
+                    finalScreenshotShown = await TryCaptureAndShowScreenshotAsync(browser, screenshotTimeoutMs, cancellationToken);
                 }
 
                 var screenshotShown = firstScreenshotShown || finalScreenshotShown;
@@ -202,7 +182,9 @@
                         ["loadTimeoutMs"] = loadTimeoutMs,
                         ["screenshotShown"] = screenshotShown,
                         ["firstScreenshotShown"] = firstScreenshotShown,
-                        ["finalScreenshotShown"] = finalScreenshotShown
+                        ["finalScreenshotShown"] = finalScreenshotShown,
+                        ["osrOneShot"] = true,
+                        ["disposedByRunAsync"] = true
                     }
                 };
             }
@@ -226,14 +208,15 @@
             }
         }
 
-        private async Task<bool> TryCaptureAndShowScreenshotAsync(int timeoutMs, CancellationToken cancellationToken)
+
+        private async Task<bool> TryCaptureAndShowScreenshotAsync(ChromiumWebBrowser browser, int timeoutMs, CancellationToken cancellationToken)
         {
-            if (Browser.IsDisposed)
+            if (browser.IsDisposed)
                 return false;
 
             try
             {
-                using var bitmap = await Browser.ScreenshotAsync(ignoreExistingScreenshot: true)
+                using var bitmap = await browser.ScreenshotAsync(ignoreExistingScreenshot: true)
                     .WaitAsync(TimeSpan.FromMilliseconds(timeoutMs), cancellationToken);
                 cancellationToken.ThrowIfCancellationRequested();
 
@@ -278,7 +261,7 @@
         }
 
         /// <summary>
-        /// 离屏浏览器没有 WinForms 承载控件，这里保留原调用点以保持外部流程不变。
+        /// OSR 一次性浏览器不挂 UI，这里保留原调用点以兼容外部流程。
         /// </summary>
         public Task DetachFromUiAsync()
         {
@@ -286,30 +269,12 @@
         }
 
         /// <summary>
-        /// 真正做重释放，建议后台调用。
+        /// OSR 浏览器实例已在 RunAsync 内通过 using 释放，这里只做幂等标记。
         /// </summary>
-        public async Task DisposeHeavyAsync()
+        public Task DisposeHeavyAsync()
         {
-            if (Interlocked.Exchange(ref _disposed, 1) != 0)
-                return;
-
-            try
-            {
-                Browser.Stop();
-            }
-            catch
-            {
-            }
-
-            try
-            {
-                Browser.Dispose();
-            }
-            catch
-            {
-            }
-
-            await Task.CompletedTask;
+            Interlocked.Exchange(ref _disposed, 1);
+            return Task.CompletedTask;
         }
 
         public async ValueTask DisposeAsync()
