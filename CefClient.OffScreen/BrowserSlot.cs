@@ -85,15 +85,14 @@ namespace CefClient
 
             var consumerId = payload?["consumerId"]?.ToString() ?? "unknown";
             var uvIndex = payload?["uvIndex"]?.ToString() ?? BrowserId;
-            var cachePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "User Data", consumerId, uvIndex);
+            var userDataRoot = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "User Data");
+            var cachePath = Path.Combine(userDataRoot, consumerId, uvIndex);
             Directory.CreateDirectory(cachePath);
 
             var os = GetNullableInt(payload, "os") ?? 0;
             var device = payload?["device"];
             var sw = GetNullableInt(device, "sw") ?? 412;
             var sh = GetNullableInt(device, "sh") ?? 915;
-            var ua = payload?["userAgent"]?.ToString() ?? string.Empty;
-            var platform = os == 1 ? "Android" : "iPhone";
 
             var browserSettings = new BrowserSettings
             {
@@ -116,13 +115,16 @@ namespace CefClient
                 };
                 await browser.WaitForInitialLoadAsync()
                     .WaitAsync(TimeSpan.FromMilliseconds(DefaultInitialLoadTimeoutMs), cancellationToken);
-
                 using var devToolsClient = browser.GetDevToolsClient();
 
-                await devToolsClient.Storage.ClearDataForOriginAsync("*", "cache_storage,cookies,local_storage");
+                if (GetBool(payload, "clearStorage", false))
+                {
+                    await devToolsClient.Storage.ClearDataForOriginAsync("*", "cache_storage,cookies,local_storage");
+                }
+
                 await devToolsClient.Emulation.SetTouchEmulationEnabledAsync(true, Random.Shared.Next(4, 6));
                 await devToolsClient.Emulation.SetDeviceMetricsOverrideAsync(width: sw, height: sh, deviceScaleFactor: 1, mobile: true);
-                await devToolsClient.Emulation.SetUserAgentOverrideAsync(userAgent: ua, platform: platform);
+                await devToolsClient.Emulation.SetUserAgentOverrideAsync(userAgent: payload?["userAgent"]?.ToString() ?? string.Empty, platform: os == 1 ? "Android" : "iPhone");
 
                 var loadTimeoutMs = GetPositiveInt(payload, "loadTimeoutMs", DefaultLoadTimeoutMs);
                 var firstScreenshotDelayMs = GetPositiveInt(payload, "firstScreenshotDelayMs", DefaultFirstScreenshotDelayMs);
@@ -130,18 +132,29 @@ namespace CefClient
                 var screenshotTimeoutMs = GetPositiveInt(payload, "screenshotTimeoutMs", DefaultScreenshotTimeoutMs);
                 var titleTimeoutMs = GetPositiveInt(payload, "titleTimeoutMs", DefaultTitleTimeoutMs);
 
-                var loadTask = CefHelper.LoadUrlAndWaitAsync(
-                    browser,
-                    url,
+                var navigationTask = browser.WaitForNavigationAsync(
                     TimeSpan.FromMilliseconds(loadTimeoutMs),
                     cancellationToken);
+                browser.Load(url);
 
                 // OSR 模式每次 runBrowser 都是一次性浏览：创建、浏览、截图、返回后由 using 自动释放。
                 await Task.Delay(TimeSpan.FromMilliseconds(firstScreenshotDelayMs), cancellationToken);
                 var firstScreenshotShown = await TryCaptureAndShowScreenshotAsync(browser, screenshotTimeoutMs, cancellationToken);
 
-                var loadResult = await loadTask;
-                if (loadResult == PageLoadResult.Failed)
+                WaitForNavigationAsyncResponse? loadResponse = null;
+                var loadTimedOut = false;
+                try
+                {
+                    loadResponse = await navigationTask;
+                }
+                catch (TimeoutException)
+                {
+                    loadTimedOut = true;
+                    TryStopBrowser(browser);
+                }
+
+                var loadFailed = loadResponse != null && loadResponse.ErrorCode != CefErrorCode.None;
+                if (loadFailed)
                 {
                     return new BrowserRunResult
                     {
@@ -151,6 +164,9 @@ namespace CefClient
                         Data = new JsonObject
                         {
                             ["url"] = url,
+                            ["cachePath"] = cachePath,
+                            ["loadErrorCode"] = loadResponse?.ErrorCode.ToString() ?? string.Empty,
+                            ["httpStatusCode"] = loadResponse?.HttpStatusCode ?? -1,
                             ["firstScreenshotShown"] = firstScreenshotShown,
                             ["screenshotShown"] = firstScreenshotShown,
                             ["osrOneShot"] = true,
@@ -169,7 +185,7 @@ namespace CefClient
                 }
 
                 var screenshotShown = firstScreenshotShown || finalScreenshotShown;
-                var loadCompleted = loadResult == PageLoadResult.Completed;
+                var loadCompleted = loadResponse != null && !loadTimedOut && loadResponse.ErrorCode == CefErrorCode.None;
 
                 return new BrowserRunResult
                 {
@@ -181,8 +197,11 @@ namespace CefClient
                         ["title"] = title ?? "",
                         ["url"] = url,
                         ["loadCompleted"] = loadCompleted,
-                        ["loadTimedOut"] = loadResult == PageLoadResult.TimedOut,
+                        ["loadTimedOut"] = loadTimedOut,
+                        ["loadErrorCode"] = loadResponse?.ErrorCode.ToString() ?? string.Empty,
+                        ["httpStatusCode"] = loadResponse?.HttpStatusCode ?? -1,
                         ["loadTimeoutMs"] = loadTimeoutMs,
+                        ["cachePath"] = cachePath,
                         ["screenshotShown"] = screenshotShown,
                         ["firstScreenshotShown"] = firstScreenshotShown,
                         ["finalScreenshotShown"] = finalScreenshotShown,
@@ -212,6 +231,19 @@ namespace CefClient
         }
 
 
+
+        private static void TryStopBrowser(ChromiumWebBrowser browser)
+        {
+            try
+            {
+                if (!browser.IsDisposed)
+                    browser.Stop();
+            }
+            catch
+            {
+            }
+        }
+
         private async Task<bool> TryCaptureAndShowScreenshotAsync(ChromiumWebBrowser browser, int timeoutMs, CancellationToken cancellationToken)
         {
             if (browser.IsDisposed)
@@ -219,14 +251,16 @@ namespace CefClient
 
             try
             {
-                using var bitmap = await browser.ScreenshotAsync(ignoreExistingScreenshot: true)
+                var screenshotBytes = await browser.CaptureScreenshotAsync()
                     .WaitAsync(TimeSpan.FromMilliseconds(timeoutMs), cancellationToken);
                 cancellationToken.ThrowIfCancellationRequested();
 
-                if (bitmap == null)
+                if (screenshotBytes == null || screenshotBytes.Length == 0)
                     return false;
 
-                _screenshotReady(BrowserId, new Bitmap(bitmap));
+                using var stream = new MemoryStream(screenshotBytes);
+                using var image = Image.FromStream(stream);
+                _screenshotReady(BrowserId, new Bitmap(image));
                 return true;
             }
             catch (OperationCanceledException)
@@ -236,6 +270,18 @@ namespace CefClient
             catch
             {
                 return false;
+            }
+        }
+
+        private static bool GetBool(JsonNode? payload, string name, bool defaultValue)
+        {
+            try
+            {
+                return payload?[name]?.GetValue<bool>() ?? defaultValue;
+            }
+            catch
+            {
+                return defaultValue;
             }
         }
 

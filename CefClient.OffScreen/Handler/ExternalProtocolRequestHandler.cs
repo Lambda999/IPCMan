@@ -4,8 +4,10 @@ using CefSharp.Handler;
 namespace CefClient.Handler
 {
     /// <summary>
-    /// OSR 只允许正常网页导航。遇到 mailto/tel/baiduboxapp/intent 等外部协议时取消本次导航，
+    /// OSR 只允许正常网页导航和 WebSocket 连接。遇到 mailto/tel/baiduboxapp/intent 等外部协议时取消本次导航，
     /// 保持当前页面不变，并输出日志。
+    /// 这里不使用 ISchemeHandlerFactory：SchemeHandler 需要预先注册固定 scheme，且会为导航返回替代资源；
+    /// 当前需求是拦截任意非 http/https/ws/wss/about 协议并取消导航，不改变已打开页面。
     /// </summary>
     public sealed class ExternalProtocolRequestHandler : RequestHandler
     {
@@ -39,6 +41,8 @@ namespace CefClient.Handler
 
             return string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
                 || string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(uri.Scheme, "ws", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(uri.Scheme, "wss", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(uri.Scheme, "about", StringComparison.OrdinalIgnoreCase);
         }
     }

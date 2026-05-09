@@ -20,16 +20,13 @@ namespace CefClient
 
             var rootCachePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "User Data");
 
+            var userDataRoot = Path.Combine(AppContext.BaseDirectory, "User Data");
+            Directory.CreateDirectory(userDataRoot);
 
-
-
-            var settings = new CefSettings
+            var settings = new CefSharp.OffScreen.CefSettings
             {
-                BrowserSubprocessPath = defaultSubprocessPath,
-                RootCachePath = rootCachePath,
-                //CachePath = rootCachePath,
-                PersistSessionCookies = false,
-
+                 BrowserSubprocessPath = defaultSubprocessPath,
+                 RootCachePath = userDataRoot
             };
 
             settings.CefCommandLineArgs.Add("enable-media-stream");
