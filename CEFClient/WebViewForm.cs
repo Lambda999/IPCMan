@@ -1,10 +1,10 @@
-﻿using CefClient.Common;
+using CefClient.Common;
 using CefClient.Event;
 using CefClient.Handler;
 using CefSharp;
 using CefSharp.DevTools;
 using CefSharp.WinForms;
-using Newtonsoft.Json.Linq;
+using System.Text.Json.Nodes;
 using System;
 using System.Collections.Generic;
 using System.Collections.Specialized;
@@ -28,7 +28,7 @@ namespace CefClient
     {
         private const string caption = "曝光浏览器";
         private ChromiumWebBrowser chromiumWebBrowser = null;
-        private readonly JObject _args;
+        private readonly JsonObject _args;
         private bool isHiddenMode = true;
 
         #region  LogWrite
@@ -199,12 +199,12 @@ namespace CefClient
             return browser;
         }
         char[] delimiters = { '\r', '\n' };
-        public WebViewForm(JObject args)
+        public WebViewForm(JsonObject args)
         {
             this._args = args;
 
             InitializeComponent();
-            var task = (JObject)_args["task"];
+            var task = _args["task"]?.AsObject() ?? new JsonObject();
             this.chromiumWebBrowser = CreateChromiumWebBrowser();
             this.Controls.Add(this.chromiumWebBrowser);
             this.chromiumWebBrowser.Dock = DockStyle.None;
@@ -249,18 +249,18 @@ namespace CefClient
                     string current_url = string.Empty;
                     List<string> urls = new List<string>();
                     List<string> referers = new List<string>();
-                    if (_args["url"] is JArray)
+                    if (_args["url"] is JsonArray)
                         urls.AddRange(_args["url"].Select(s => s.ToString()));
                     else
-                        urls.Add(_args["url"].Value<string>());
+                        urls.Add(_args["url"].GetValue<string>());
 
-                    if (_args["referer"] is JArray)
+                    if (_args["referer"] is JsonArray)
                         referers.AddRange(_args["referer"].Select(s => s.ToString()));
                     else
                     {
-                        if (!string.IsNullOrWhiteSpace(_args["referer"].Value<string>()))
+                        if (!string.IsNullOrWhiteSpace(_args["referer"].GetValue<string>()))
                         {
-                            referers.Add(_args["referer"].Value<string>());
+                            referers.Add(_args["referer"].GetValue<string>());
                         }
 
                     }
