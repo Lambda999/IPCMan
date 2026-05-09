@@ -694,7 +694,9 @@ namespace MainClient
 
                         try
                         {
-                            await session.CreateBrowserAsync(ctx.UniqueId, browserId, innerToken);
+                            // 多 UV 只按配置间隔投递到 CefClient，不等待子进程完成 browserCreated。
+                            // CefClient 的管道读取是顺序的，同一个 browserId 会先执行 createBrowser 再执行 runBrowser。
+                            await session.CreateBrowserNoWaitAsync(ctx.UniqueId, browserId, innerToken);
 
                             var uvPayload = BuildRunBrowserPayload(ctx, rawTask, dev, consumerId, uvIndex);
                             await session.RunBrowserNoWaitAsync(
