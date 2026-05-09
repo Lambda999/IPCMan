@@ -376,8 +376,13 @@ namespace MainClient
                     return;
                 }
 
+
                 var ctx = parseResult.Context!;
                 ApplyUvPvOverrides(ctx);
+
+                //_logger.LogInformation($"ConsumerAsync stop remaining uv. taskId={ctx.TaskId},consumerId={consumerId}");
+                //await Task.Delay(TimeSpan.FromSeconds(30));
+                //return;
 
 
                 var check_dev = await GetDeviceForTaskAsync(ctx.OS, ctx.TaskId, 0, token);
@@ -413,7 +418,7 @@ namespace MainClient
             }
             catch (IOException ex) when (ex.Message.Contains("Pipe is broken", StringComparison.OrdinalIgnoreCase) || ex.Message.Contains("pipe has been ended", StringComparison.OrdinalIgnoreCase))
             {
-                //_logger.LogDebug(ex, "Pipe closed during shutdown. taskId={TaskId}", ctx.TaskId);
+                _logger.LogDebug(ex, "Pipe closed during shutdown. consumerId={consumerId}", consumerId);
             }
             catch (Exception ex)
             {

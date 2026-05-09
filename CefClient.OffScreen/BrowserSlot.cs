@@ -85,7 +85,7 @@
                 };
             }
 
-            url = "chrome://version/";
+            //url = "chrome://version/";
             var taskId = payload?["taskId"]?.ToString() ?? BrowserId;
             var consumerId = payload?["consumerId"]?.ToString() ?? "unknown";
             var uvIndex = payload?["uvIndex"]?.ToString() ?? BrowserId;
