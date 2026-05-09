@@ -446,7 +446,8 @@ namespace MainClient
                 consumerId,
                 _appSettings.IsOsrMode);
 
-            await using var session = new CefClientSession(cefExePath, TimeSpan.FromSeconds(15));
+            var cefConsumerId = _appSettings.IsOsrMode ? consumerId.ToString() : null;
+            await using var session = new CefClientSession(cefExePath, TimeSpan.FromSeconds(15), cefConsumerId);
 
             session.OnLog += message =>
             {
