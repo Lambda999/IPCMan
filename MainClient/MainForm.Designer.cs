@@ -37,6 +37,9 @@
             columnHeader5 = new ColumnHeader();
             columnHeader6 = new ColumnHeader();
             groupBox2 = new GroupBox();
+            label_start = new Label();
+            label_click = new Label();
+            label_dsp = new Label();
             label38 = new Label();
             label39 = new Label();
             numericUpDown_IpTtl = new NumericUpDown();
@@ -184,6 +187,9 @@
             // 
             // groupBox2
             // 
+            groupBox2.Controls.Add(label_start);
+            groupBox2.Controls.Add(label_click);
+            groupBox2.Controls.Add(label_dsp);
             groupBox2.Controls.Add(label38);
             groupBox2.Controls.Add(label39);
             groupBox2.Controls.Add(numericUpDown_IpTtl);
@@ -245,6 +251,35 @@
             groupBox2.TabIndex = 2;
             groupBox2.TabStop = false;
             groupBox2.Text = "设置";
+            // 
+            // label_start
+            // 
+            label_start.AutoSize = true;
+            label_start.Location = new Point(938, 60);
+            label_start.Name = "label_start";
+            label_start.Size = new Size(97, 24);
+            label_start.TabIndex = 147;
+            label_start.Text = "执行数量:0";
+            // 
+            // label_click
+            // 
+            label_click.AutoSize = true;
+            label_click.Location = new Point(938, 122);
+            label_click.Margin = new Padding(5, 0, 5, 0);
+            label_click.Name = "label_click";
+            label_click.Size = new Size(97, 24);
+            label_click.TabIndex = 146;
+            label_click.Text = "点击数量:0";
+            // 
+            // label_dsp
+            // 
+            label_dsp.AutoSize = true;
+            label_dsp.Location = new Point(938, 91);
+            label_dsp.Margin = new Padding(5, 0, 5, 0);
+            label_dsp.Name = "label_dsp";
+            label_dsp.Size = new Size(97, 24);
+            label_dsp.TabIndex = 145;
+            label_dsp.Text = "曝光数量:0";
             // 
             // label38
             // 
@@ -610,7 +645,7 @@
             // label15
             // 
             label15.AutoSize = true;
-            label15.Location = new Point(914, 143);
+            label15.Location = new Point(1155, 487);
             label15.Margin = new Padding(5, 0, 5, 0);
             label15.Name = "label15";
             label15.Size = new Size(97, 24);
@@ -697,7 +732,7 @@
             // label7
             // 
             label7.AutoSize = true;
-            label7.Location = new Point(914, 106);
+            label7.Location = new Point(938, 153);
             label7.Margin = new Padding(5, 0, 5, 0);
             label7.Name = "label7";
             label7.Size = new Size(97, 24);
@@ -707,7 +742,7 @@
             // label_request
             // 
             label_request.AutoSize = true;
-            label_request.Location = new Point(914, 71);
+            label_request.Location = new Point(938, 29);
             label_request.Margin = new Padding(5, 0, 5, 0);
             label_request.Name = "label_request";
             label_request.Size = new Size(97, 24);
@@ -788,7 +823,7 @@
             // label6
             // 
             label6.AutoSize = true;
-            label6.Location = new Point(914, 35);
+            label6.Location = new Point(915, 487);
             label6.Margin = new Padding(5, 0, 5, 0);
             label6.Name = "label6";
             label6.Size = new Size(63, 24);
@@ -1106,6 +1141,9 @@
         private Label label38;
         private Label label39;
         private NumericUpDown numericUpDown_IpTtl;
+        private Label label_click;
+        private Label label_dsp;
+        private Label label_start;
     }
 }
 

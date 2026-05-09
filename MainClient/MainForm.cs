@@ -1576,6 +1576,8 @@ namespace MainClient
                     this.InvokeOnUiThreadIfRequired(() =>
                     {
                         label_request.Text = $"提交数量:{totalStats.Request}";
+                        label_start.Text = $"执行数量:{totalStats.Start}";
+                        label_dsp.Text = $"曝光数量:{totalStats.DSP}";
 
                         //label5.Text = $"提交数量:{totalStats.Request}";
                         //label6.Text = $"执行数量:{totalStats.Start}";
@@ -1585,7 +1587,7 @@ namespace MainClient
                         //toolStripStatusLabel4.Text = $"执行总量：{QTPTotalStartCount + totalStats.Start}";
                         //toolStripStatusLabel5.Text = $"曝光总量：{QTPTotalDspCount + totalStats.DSP}";
                         //toolStripStatusLabel6.Text = $"点击总量：{QTPTotalClickthroughCount + totalStats.Clickthrough}";
-                        //label12.Text = $"运行时长:{elapsed:hh\\:mm\\:ss}";
+                        label7.Text = $"运行时长:{elapsed:hh\\:mm\\:ss}";
                     });
 
                     await Task.CompletedTask;

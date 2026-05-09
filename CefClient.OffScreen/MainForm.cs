@@ -125,8 +125,8 @@ namespace CefClient
             if (WindowState == FormWindowState.Minimized)
                 WindowState = FormWindowState.Normal;
 
-            BringToFront();
-            Activate();
+           // BringToFront();
+            //Activate();
         }
 
         private static string GetScreenshotItemName(string browserId)

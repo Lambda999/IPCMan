@@ -22,7 +22,7 @@ namespace CefClient
                 CefCachePaths.RootCachePath = CefCachePaths.GetConsumerRootCachePath(consumerId);
             }
 
-            Directory.CreateDirectory(CefCachePaths.RootCachePath);
+            //Directory.CreateDirectory(CefCachePaths.RootCachePath);
 
             var defaultSubprocessPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "CefSharp.BrowserSubprocess.exe");
  
@@ -84,18 +84,18 @@ namespace CefClient
             settings.CefCommandLineArgs.Add("enable-media-stream");
             settings.CefCommandLineArgs.Add("use-fake-ui-for-media-stream");
             settings.CefCommandLineArgs.Add("enable-usermedia-screen-capturing");
-            settings.CefCommandLineArgs.Add("disable-extensions", "1");
-            settings.CefCommandLineArgs.Add("disable-plugins", "1");
-            settings.CefCommandLineArgs.Add("disable-pdf-extension", "1");
-            settings.CefCommandLineArgs.Add("disable-print-preview", "1");
-            settings.CefCommandLineArgs.Add("disable-notifications", "1");
-            settings.CefCommandLineArgs.Add("disable-speech-api", "1");
-            settings.CefCommandLineArgs.Add("disable-background-networking", "1");
-            settings.CefCommandLineArgs.Add("disable-sync", "1");
-            settings.CefCommandLineArgs.Add("metrics-recording-only", "1");
-            settings.CefCommandLineArgs.Add("disable-default-apps", "1");
-            settings.CefCommandLineArgs.Add("no-first-run", "1");
-            settings.CefCommandLineArgs.Add("no-default-browser-check", "1");
+            //settings.CefCommandLineArgs.Add("disable-extensions", "1");
+            //settings.CefCommandLineArgs.Add("disable-plugins", "1");
+            //settings.CefCommandLineArgs.Add("disable-pdf-extension", "1");
+            //settings.CefCommandLineArgs.Add("disable-print-preview", "1");
+            //settings.CefCommandLineArgs.Add("disable-notifications", "1");
+            //settings.CefCommandLineArgs.Add("disable-speech-api", "1");
+            //settings.CefCommandLineArgs.Add("disable-background-networking", "1");
+            //settings.CefCommandLineArgs.Add("disable-sync", "1");
+            //settings.CefCommandLineArgs.Add("metrics-recording-only", "1");
+            //settings.CefCommandLineArgs.Add("disable-default-apps", "1");
+            //settings.CefCommandLineArgs.Add("no-first-run", "1");
+            //settings.CefCommandLineArgs.Add("no-default-browser-check", "1");
 
             //settings.CefCommandLineArgs.Add("disable-gpu", "1");
             //settings.CefCommandLineArgs.Add("disable-gpu-compositing", "1");
@@ -106,8 +106,8 @@ namespace CefClient
             //settings.CefCommandLineArgs.Add("disable-gpu-vsync");
             //settings.CefCommandLineArgs.Add("disable-features", "Widevine");
 
-            settings.CefCommandLineArgs.Add("disk-cache-size", (100 * 1024 * 1024).ToString());   // 100MB
-            settings.CefCommandLineArgs.Add("media-cache-size", (50 * 1024 * 1024).ToString());   // 50MB
+            //settings.CefCommandLineArgs.Add("disk-cache-size", (100 * 1024 * 1024).ToString());   // 100MB
+            //settings.CefCommandLineArgs.Add("media-cache-size", (50 * 1024 * 1024).ToString());   // 50MB
             
             //settings.DisableGpuAcceleration();
             settings.SetOffScreenRenderingBestPerformanceArgs();

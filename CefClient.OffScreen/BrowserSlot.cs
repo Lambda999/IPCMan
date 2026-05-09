@@ -100,11 +100,11 @@
                     };
                 }
 
-                url = "chrome://version/";
+                //url = "chrome://version/";
                 //var cachePath = System.IO.Path.GetFullPath(CefCachePaths.GetUvCachePath(taskId, consumerId, uvIndex, BrowserId));
                 var cachePath = Path.Combine(CefCachePaths.RootCachePath, uvIndex);
 
-                Directory.CreateDirectory(cachePath);
+                //Directory.CreateDirectory(cachePath);
 
                 var os = GetNullableInt(payload, "os") ?? 0;
                 var device = payload?["device"];
@@ -125,8 +125,8 @@
 
                 var requestContextSettings = new RequestContextSettings
                 {
-                    PersistSessionCookies = true,
-                    CachePath = cachePath,
+                    PersistSessionCookies = false,
+                    CachePath = null,
                 };
 
                 using var requestContext = new RequestContext(requestContextSettings);
@@ -408,7 +408,7 @@
 
                 using var stream = new MemoryStream(screenshotBytes);
                 using var image = Image.FromStream(stream);
-                image.Save($"test_{Guid.NewGuid()}.png");
+                //image.Save($"test_{Guid.NewGuid()}.png");
                 _screenshotReady(BrowserId, new Bitmap(image));
                 return true;
             }

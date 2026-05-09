@@ -178,6 +178,7 @@ public class AdeHelper
     /// <returns></returns>
     public async Task<JsonNode?> UpdateTaskStateAsync(int taskId, Dictionary<string, long> metrics, CancellationToken token = default)
     {
+        return null;
         try
         {
             var host = await CommonHelper.GetLocalHostAsync();
@@ -203,7 +204,7 @@ public class AdeHelper
         }
         catch (Exception ex)
         {
-            _logger.LogError($"UpdateTaskStatusAsync TaskId={taskId} failed: {ex.Message}");
+            _logger.LogError($"UpdateTaskStateAsync TaskId={taskId} failed: {ex.Message}");
         }
         return null;
     }
@@ -264,9 +265,8 @@ public class AdeHelper
     {
         metrics ??= new Dictionary<string, long>();
         string wordName = "default";
-
-
         var host = await CommonHelper.GetLocalHostAsync();
+        return null;
         try
         {
             var baseUrl = new Uri(_appSettings.TaskApiUrl).GetLeftPart(UriPartial.Authority);
@@ -295,7 +295,7 @@ public class AdeHelper
         }
         catch (Exception ex)
         {
-            _logger.LogError($"UpdateHostStatusAsync Host={host} failed: {ex.Message}");
+            _logger.LogError($"UpdateHostStateAsync Host={host} failed: {ex.Message}");
         }
         return null;
     }
