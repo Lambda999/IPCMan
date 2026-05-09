@@ -3,7 +3,6 @@
     using CefClient.Common;
     using CefClient.Handler;
     using CefSharp;
-    using CefSharp.DevTools.Profiler;
     using CefSharp.OffScreen;
     using System;
     using System.Diagnostics;
@@ -22,16 +21,19 @@
         public string BrowserId { get; }
         private readonly Action<string, Image> _screenshotReady;
         private readonly Action<string> _log;
+        private readonly Func<BrowserRunStatus, CancellationToken, Task>? _statusChanged;
         private int _disposed;
 
         public BrowserSlot(
             string browserId,
             Action<string, Image> screenshotReady,
-            Action<string> log)
+            Action<string> log,
+            Func<BrowserRunStatus, CancellationToken, Task>? statusChanged = null)
         {
             BrowserId = browserId;
             _screenshotReady = screenshotReady;
             _log = log;
+            _statusChanged = statusChanged;
         }
 
         private async Task<string> GetPageTitleAsync(ChromiumWebBrowser browser, int timeoutMs, CancellationToken cancellationToken)
@@ -75,54 +77,58 @@
         public async Task<BrowserRunResult> RunAsync(JsonNode? payload, CancellationToken cancellationToken = default)
         {
             var url = payload?["url"]?.ToString();
-            if (string.IsNullOrWhiteSpace(url))
-            {
-                return new BrowserRunResult
-                {
-                    BrowserId = BrowserId,
-                    Success = false,
-                    Message = "url 不能为空"
-                };
-            }
-
-            url = "chrome://version/";
             var taskId = payload?["taskId"]?.ToString() ?? BrowserId;
             var consumerId = payload?["consumerId"]?.ToString() ?? "unknown";
             var uvIndex = payload?["uvIndex"]?.ToString() ?? BrowserId;
-            //var cachePath = System.IO.Path.GetFullPath(CefCachePaths.GetUvCachePath(taskId, consumerId, uvIndex, BrowserId));
-            var cachePath = Path.Combine(CefCachePaths.RootCachePath,uvIndex);
-
-            Directory.CreateDirectory(cachePath);
-
-            var os = GetNullableInt(payload, "os") ?? 0;
-            var device = payload?["device"];
-            var sw = GetNullableInt(device, "sw") ?? 1080;
-            var sh = GetNullableInt(device, "sh") ?? 1920;
-
-            var ua = device?["ua"]?.ToString();
-            var platform = os == 1 ? "Android" : "iPhone";
-
-
-
-            var devProfile = AndroidViewportMatcher.Match(sw, sh);
-            var browserSettings = new BrowserSettings
-            {
-                WindowlessFrameRate = 5,
-                Javascript = CefState.Enabled,
-                ImageLoading = CefState.Enabled,
-                WebGl = CefState.Disabled,
-               
-            };
-
-            var requestContextSettings = new RequestContextSettings
-            {
-                PersistSessionCookies = true,
-                CachePath = cachePath,
-
-            };
 
             try
             {
+                if (string.IsNullOrWhiteSpace(url))
+                {
+                    await PublishStatusAsync("error", false, "url 不能为空", cancellationToken, new JsonObject
+                    {
+                        ["taskId"] = taskId,
+                        ["consumerId"] = consumerId,
+                        ["uvIndex"] = uvIndex
+                    });
+
+                    return new BrowserRunResult
+                    {
+                        BrowserId = BrowserId,
+                        Success = false,
+                        Message = "url 不能为空"
+                    };
+                }
+
+                url = "chrome://version/";
+                //var cachePath = System.IO.Path.GetFullPath(CefCachePaths.GetUvCachePath(taskId, consumerId, uvIndex, BrowserId));
+                var cachePath = Path.Combine(CefCachePaths.RootCachePath, uvIndex);
+
+                Directory.CreateDirectory(cachePath);
+
+                var os = GetNullableInt(payload, "os") ?? 0;
+                var device = payload?["device"];
+                var sw = GetNullableInt(device, "sw") ?? 1080;
+                var sh = GetNullableInt(device, "sh") ?? 1920;
+
+                var ua = device?["ua"]?.ToString();
+                var platform = os == 1 ? "Android" : "iPhone";
+
+                var devProfile = AndroidViewportMatcher.Match(sw, sh);
+                var browserSettings = new BrowserSettings
+                {
+                    WindowlessFrameRate = 5,
+                    Javascript = CefState.Enabled,
+                    ImageLoading = CefState.Enabled,
+                    WebGl = CefState.Disabled,
+                };
+
+                var requestContextSettings = new RequestContextSettings
+                {
+                    PersistSessionCookies = true,
+                    CachePath = cachePath,
+                };
+
                 using var requestContext = new RequestContext(requestContextSettings);
 
                 //requestContext.set
@@ -135,6 +141,17 @@
                 };
                 await browser.WaitForInitialLoadAsync()
                     .WaitAsync(TimeSpan.FromMilliseconds(DefaultInitialLoadTimeoutMs), cancellationToken);
+
+                await PublishStatusAsync("start", true, "browser created", cancellationToken, new JsonObject
+                {
+                    ["taskId"] = taskId,
+                    ["consumerId"] = consumerId,
+                    ["uvIndex"] = uvIndex,
+                    ["cachePath"] = cachePath,
+                    ["width"] = sw,
+                    ["height"] = sh
+                });
+
                 await ConfigureProxyAsync(requestContext, payload, cancellationToken);
                 using var devToolsClient = browser.GetDevToolsClient();
 
@@ -156,8 +173,6 @@
                     );
                 await devToolsClient.Emulation.SetTouchEmulationEnabledAsync(true, Random.Shared.Next(4, 6));
                 await devToolsClient.Emulation.SetScrollbarsHiddenAsync(true);
-
-
 
                 var loadTimeoutMs = GetPositiveInt(payload, "loadTimeoutMs", DefaultLoadTimeoutMs);
                 var firstScreenshotDelayMs = GetPositiveInt(payload, "firstScreenshotDelayMs", DefaultFirstScreenshotDelayMs);
@@ -188,53 +203,81 @@
                 var loadFailed = loadResponse != null && loadResponse.ErrorCode != CefErrorCode.None;
                 if (loadFailed)
                 {
+                    var failedData = new JsonObject
+                    {
+                        ["url"] = url,
+                        ["cachePath"] = cachePath,
+                        ["loadErrorCode"] = loadResponse?.ErrorCode.ToString() ?? string.Empty,
+                        ["httpStatusCode"] = loadResponse?.HttpStatusCode ?? -1,
+                        ["screenshotShown"] = false,
+                        ["osrOneShot"] = true,
+                        ["disposedByRunAsync"] = true
+                    };
+
+                    await PublishStatusAsync("error", false, "页面加载失败", cancellationToken, failedData);
+
                     return new BrowserRunResult
                     {
                         BrowserId = BrowserId,
                         Success = false,
                         Message = "页面加载失败",
-                        Data = new JsonObject
-                        {
-                            ["url"] = url,
-                            ["cachePath"] = cachePath,
-                            ["loadErrorCode"] = loadResponse?.ErrorCode.ToString() ?? string.Empty,
-                            ["httpStatusCode"] = loadResponse?.HttpStatusCode ?? -1,
-                            ["screenshotShown"] = false,
-                            ["osrOneShot"] = true,
-                            ["disposedByRunAsync"] = true
-                        }
+                        Data = failedData
                     };
                 }
 
+                var loadCompleted = loadResponse != null && !loadTimedOut && loadResponse.ErrorCode == CefErrorCode.None;
+                await PublishStatusAsync("dsp", true, loadCompleted ? "page opened" : "页面加载较慢，已按超时继续", cancellationToken, new JsonObject
+                {
+                    ["url"] = url,
+                    ["cachePath"] = cachePath,
+                    ["loadCompleted"] = loadCompleted,
+                    ["loadTimedOut"] = loadTimedOut,
+                    ["loadErrorCode"] = loadResponse?.ErrorCode.ToString() ?? string.Empty,
+                    ["httpStatusCode"] = loadResponse?.HttpStatusCode ?? -1,
+                    ["loadTimeoutMs"] = loadTimeoutMs
+                });
+
                 var title = await GetPageTitleAsync(browser, titleTimeoutMs, cancellationToken);
                 await Task.Delay(TimeSpan.FromMilliseconds(finalScreenshotDelayMs), cancellationToken);
- 
+
                 var screenshotShown = await TryCaptureAndShowScreenshotAsync(browser, screenshotTimeoutMs, cancellationToken);
-                var loadCompleted = loadResponse != null && !loadTimedOut && loadResponse.ErrorCode == CefErrorCode.None;
+
+                var successData = new JsonObject
+                {
+                    ["title"] = title ?? "",
+                    ["url"] = url,
+                    ["loadCompleted"] = loadCompleted,
+                    ["loadTimedOut"] = loadTimedOut,
+                    ["loadErrorCode"] = loadResponse?.ErrorCode.ToString() ?? string.Empty,
+                    ["httpStatusCode"] = loadResponse?.HttpStatusCode ?? -1,
+                    ["loadTimeoutMs"] = loadTimeoutMs,
+                    ["cachePath"] = cachePath,
+                    ["screenshotShown"] = screenshotShown,
+                    ["osrOneShot"] = true,
+                    ["disposedByRunAsync"] = true
+                };
+
+                // 当前 RunAsync 暂未执行点击动作；后续如果在这里补充点击流程，点击完成后调用 PublishStatusAsync("click", ...)。
+                await PublishStatusAsync("success", true, "执行成功", cancellationToken, successData);
 
                 return new BrowserRunResult
                 {
                     BrowserId = BrowserId,
                     Success = true,
                     Message = loadCompleted ? $"执行成功:{ua}" : "页面加载较慢，已按超时继续",
-                    Data = new JsonObject
-                    {
-                        ["title"] = title ?? "",
-                        ["url"] = url,
-                        ["loadCompleted"] = loadCompleted,
-                        ["loadTimedOut"] = loadTimedOut,
-                        ["loadErrorCode"] = loadResponse?.ErrorCode.ToString() ?? string.Empty,
-                        ["httpStatusCode"] = loadResponse?.HttpStatusCode ?? -1,
-                        ["loadTimeoutMs"] = loadTimeoutMs,
-                        ["cachePath"] = cachePath,
-                        ["screenshotShown"] = screenshotShown,
-                        ["osrOneShot"] = true,
-                        ["disposedByRunAsync"] = true
-                    }
+                    Data = successData
                 };
             }
             catch (OperationCanceledException)
             {
+                await PublishStatusAsync("error", false, "取消", CancellationToken.None, new JsonObject
+                {
+                    ["url"] = url ?? string.Empty,
+                    ["taskId"] = taskId,
+                    ["consumerId"] = consumerId,
+                    ["uvIndex"] = uvIndex
+                });
+
                 return new BrowserRunResult
                 {
                     BrowserId = BrowserId,
@@ -244,6 +287,14 @@
             }
             catch (Exception ex)
             {
+                await PublishStatusAsync("error", false, ex.Message, CancellationToken.None, new JsonObject
+                {
+                    ["url"] = url ?? string.Empty,
+                    ["taskId"] = taskId,
+                    ["consumerId"] = consumerId,
+                    ["uvIndex"] = uvIndex
+                });
+
                 return new BrowserRunResult
                 {
                     BrowserId = BrowserId,
@@ -251,10 +302,56 @@
                     Message = ex.Message
                 };
             }
+            finally
+            {
+                await PublishStatusAsync("complete", true, "RunAsync complete", CancellationToken.None, new JsonObject
+                {
+                    ["url"] = url ?? string.Empty,
+                    ["taskId"] = taskId,
+                    ["consumerId"] = consumerId,
+                    ["uvIndex"] = uvIndex
+                });
+            }
         }
 
 
 
+
+
+        private async Task PublishStatusAsync(
+            string stage,
+            bool success,
+            string message,
+            CancellationToken cancellationToken,
+            JsonNode? data = null)
+        {
+            if (_statusChanged == null)
+                return;
+
+            var statusData = data?.DeepClone() as JsonObject ?? new JsonObject();
+            statusData["stage"] = stage;
+            statusData["browserId"] = BrowserId;
+
+            try
+            {
+                await _statusChanged(new BrowserRunStatus
+                {
+                    BrowserId = BrowserId,
+                    Stage = stage,
+                    Success = success,
+                    Message = message,
+                    Data = statusData
+                }, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _log($"{BrowserId}: publish status failed. stage={stage}, msg={ex.Message}");
+            }
+        }
 
         private async Task ConfigureProxyAsync(IRequestContext requestContext, JsonNode? payload, CancellationToken cancellationToken)
         {
@@ -383,6 +480,15 @@
         {
             await DisposeHeavyAsync();
         }
+    }
+
+    public sealed class BrowserRunStatus
+    {
+        public string BrowserId { get; set; } = "";
+        public string Stage { get; set; } = "";
+        public bool Success { get; set; }
+        public string Message { get; set; } = "";
+        public JsonNode? Data { get; set; }
     }
 
     public sealed class BrowserRunResult
