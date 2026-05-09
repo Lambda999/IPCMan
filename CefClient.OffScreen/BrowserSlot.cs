@@ -1,5 +1,6 @@
-﻿namespace CefClient
+namespace CefClient
 {
+    using CefClient.Handler;
     using CefSharp;
     using CefSharp.OffScreen;
     using System;
@@ -14,16 +15,21 @@
         private const int DefaultFinalScreenshotDelayMs = 1500;
         private const int DefaultScreenshotTimeoutMs = 1500;
         private const int DefaultTitleTimeoutMs = 1000;
-        private const int DefaultBrowserInitTimeoutMs = 5000;
+        private const int DefaultInitialLoadTimeoutMs = 5000;
 
         public string BrowserId { get; }
         private readonly Action<string, Image> _screenshotReady;
+        private readonly Action<string> _log;
         private int _disposed;
 
-        public BrowserSlot(string browserId, Action<string, Image> screenshotReady)
+        public BrowserSlot(
+            string browserId,
+            Action<string, Image> screenshotReady,
+            Action<string> log)
         {
             BrowserId = browserId;
             _screenshotReady = screenshotReady;
+            _log = log;
         }
 
         private async Task<string> GetPageTitleAsync(ChromiumWebBrowser browser, int timeoutMs, CancellationToken cancellationToken)
@@ -103,9 +109,11 @@
                 using var requestContext = new RequestContext(requestContextSettings);
                 using var browser = new ChromiumWebBrowser("about:blank", browserSettings, requestContext)
                 {
-                    Size = new Size(sw, sh)
+                    Size = new Size(sw, sh),
+                    RequestHandler = new ExternalProtocolRequestHandler(message => _log($"{BrowserId}: {message}"))
                 };
-                await WaitForBrowserInitializedAsync(browser, DefaultBrowserInitTimeoutMs, cancellationToken);
+                await browser.WaitForInitialLoadAsync()
+                    .WaitAsync(TimeSpan.FromMilliseconds(DefaultInitialLoadTimeoutMs), cancellationToken);
                 using var devToolsClient = browser.GetDevToolsClient();
 
                 await devToolsClient.Storage.ClearDataForOriginAsync("*", "cache_storage,cookies,local_storage");
@@ -200,44 +208,6 @@
             }
         }
 
-
-        private static async Task WaitForBrowserInitializedAsync(ChromiumWebBrowser browser, int timeoutMs, CancellationToken cancellationToken)
-        {
-            if (browser.IsDisposed)
-                throw new ObjectDisposedException(nameof(ChromiumWebBrowser));
-
-            if (browser.IsBrowserInitialized)
-                return;
-
-            var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            EventHandler? handler = null;
-
-            handler = (_, _) =>
-            {
-                if (browser.IsBrowserInitialized)
-                    tcs.TrySetResult();
-            };
-
-            browser.IsBrowserInitializedChanged += handler;
-
-            try
-            {
-                if (browser.IsBrowserInitialized)
-                    return;
-
-                using var timeoutCts = new CancellationTokenSource(TimeSpan.FromMilliseconds(timeoutMs));
-                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
-                await tcs.Task.WaitAsync(linkedCts.Token);
-            }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-            {
-                throw new TimeoutException("离屏浏览器初始化超时");
-            }
-            finally
-            {
-                browser.IsBrowserInitializedChanged -= handler;
-            }
-        }
 
         private async Task<bool> TryCaptureAndShowScreenshotAsync(ChromiumWebBrowser browser, int timeoutMs, CancellationToken cancellationToken)
         {
