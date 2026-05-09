@@ -45,7 +45,7 @@ namespace CefClient
             var settings = new CefSharp.OffScreen.CefSettings
             {
                  BrowserSubprocessPath = defaultSubprocessPath,
-                 RootCachePath = rootCachePath,
+                 //RootCachePath = rootCachePath,
                  //CachePath = userDataRoot,
                  PersistSessionCookies = false,
             };

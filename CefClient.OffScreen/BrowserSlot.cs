@@ -115,6 +115,7 @@ namespace CefClient
                 };
                 await browser.WaitForInitialLoadAsync()
                     .WaitAsync(TimeSpan.FromMilliseconds(DefaultInitialLoadTimeoutMs), cancellationToken);
+                await ConfigureProxyAsync(requestContext, payload, cancellationToken);
                 using var devToolsClient = browser.GetDevToolsClient();
 
                 if (GetBool(payload, "clearStorage", false))
@@ -220,6 +221,32 @@ namespace CefClient
         }
 
 
+
+
+        private async Task ConfigureProxyAsync(IRequestContext requestContext, JsonNode? payload, CancellationToken cancellationToken)
+        {
+            var proxyServer = payload?["proxy_server"]?.ToString();
+            if (string.IsNullOrWhiteSpace(proxyServer))
+                proxyServer = payload?["proxyServer"]?.ToString();
+
+            var isProxyMode = GetBool(payload, "isProxyMode", false) || !string.IsNullOrWhiteSpace(proxyServer);
+            if (!isProxyMode || string.IsNullOrWhiteSpace(proxyServer))
+                return;
+
+            await Cef.UIThreadTaskFactory.StartNew(() =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var preferences = new Dictionary<string, object>
+                {
+                    ["mode"] = "fixed_servers",
+                    ["server"] = proxyServer
+                };
+
+                var success = requestContext.SetPreference("proxy", preferences, out var error);
+                _log($"{BrowserId}: Set proxy server={proxyServer}, success={success}, error={error}");
+            });
+        }
 
         private static void TryStopBrowser(ChromiumWebBrowser browser)
         {

@@ -880,6 +880,8 @@ namespace MainClient
                 ["os"] = (int)(ctx.OS),
                 ["device"] = JsonNode.Parse(System.Text.Json.JsonSerializer.Serialize(dev)),
                 ["userAgent"] = dev is JToken devToken ? devToken["ua"]?.Value<string>() ?? string.Empty : string.Empty,
+                ["isProxyMode"] = _appSettings.IsProxyMode,
+                ["proxy_server"] = ctx.ProxyServer ?? string.Empty,
                 ["rawTask"] = rawTask.ToString(Newtonsoft.Json.Formatting.None),
                 ["url"] = ctx.Url,
                 // OSR 端用这些短超时防止慢页面长期占住本次 UV，影响后续任务调度。
