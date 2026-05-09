@@ -1,4 +1,4 @@
-using CefSharp;
+﻿using CefSharp;
 using CefSharp.OffScreen;
 using System;
 using System.Windows.Forms;
@@ -16,7 +16,7 @@ namespace CefClient
 
             var defaultSubprocessPath = Path.Combine(AppContext.BaseDirectory, "CefSharp.BrowserSubprocess.exe");
 
-            var rootCachePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "User Data");
+            var rootCachePath = CefCachePaths.RootCachePath;
             ApplicationConfiguration.Initialize();
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
 
@@ -42,11 +42,12 @@ namespace CefClient
                 e.SetObserved();
             };
 
+            Directory.CreateDirectory(rootCachePath);
+
             var settings = new CefSharp.OffScreen.CefSettings
             {
                  BrowserSubprocessPath = defaultSubprocessPath,
-                 //RootCachePath = rootCachePath,
-                 //CachePath = userDataRoot,
+                 RootCachePath = rootCachePath,
                  PersistSessionCookies = false,
             };
 

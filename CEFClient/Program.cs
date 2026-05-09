@@ -20,9 +20,13 @@ namespace CefClient
                 .FirstOrDefault(x => x.StartsWith("--pipe-name=", StringComparison.OrdinalIgnoreCase))
                 ?.Substring("--pipe-name=".Length);
 
+            Directory.CreateDirectory(CefCachePaths.RootCachePath);
+
             var settings = new CefSettings
             {
-                BrowserSubprocessPath = System.Diagnostics.Process.GetCurrentProcess().MainModule!.FileName
+                BrowserSubprocessPath = System.Diagnostics.Process.GetCurrentProcess().MainModule!.FileName,
+                RootCachePath = CefCachePaths.RootCachePath,
+                PersistSessionCookies = false
             };
 
             settings.CefCommandLineArgs.Add("enable-media-stream");
