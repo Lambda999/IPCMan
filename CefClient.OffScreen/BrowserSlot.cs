@@ -100,7 +100,6 @@
             {
                 PersistSessionCookies = true,
                 CachePath = cachePath,
-                PersistUserPreferences = true
             };
 
             try

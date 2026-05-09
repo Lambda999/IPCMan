@@ -58,7 +58,6 @@ namespace CefClient
                  RootCachePath = rootCachePath,
                  CachePath = rootCachePath,
                  PersistSessionCookies = false,
-                 PersistUserPreferences = true,
             };
 
             settings.CefCommandLineArgs.Add("enable-media-stream");
