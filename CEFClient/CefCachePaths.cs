@@ -6,7 +6,6 @@ namespace CefClient
     internal static class CefCachePaths
     {
         public static string RootCachePath { get; set; } = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "User Data");
-        public static string DefaultCachePath => Path.Combine(RootCachePath, "Default");
 
         public static string GetTaskSlotCachePath(string? taskId, string browserId)
         {

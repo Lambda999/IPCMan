@@ -53,7 +53,7 @@ namespace CefClient
                 var requestContext = new RequestContext(new RequestContextSettings
                 {
                     CachePath = cachePath,
-                    PersistUserPreferences = true,
+                   // PersistUserPreferences = true,
                     PersistSessionCookies = false,
                 });
 
