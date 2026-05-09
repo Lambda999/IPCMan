@@ -85,12 +85,12 @@
                 };
             }
 
-            //url = "chrome://version/";
+            url = "chrome://version/";
             var taskId = payload?["taskId"]?.ToString() ?? BrowserId;
             var consumerId = payload?["consumerId"]?.ToString() ?? "unknown";
             var uvIndex = payload?["uvIndex"]?.ToString() ?? BrowserId;
             //var cachePath = System.IO.Path.GetFullPath(CefCachePaths.GetUvCachePath(taskId, consumerId, uvIndex, BrowserId));
-            var cachePath = Path.Combine(CefCachePaths.RootCachePath, consumerId,uvIndex);
+            var cachePath = Path.Combine(CefCachePaths.RootCachePath,uvIndex);
 
             Directory.CreateDirectory(cachePath);
 
