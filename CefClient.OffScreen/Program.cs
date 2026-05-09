@@ -10,8 +10,6 @@ namespace CefClient
         [STAThread]
         public static int Main(string[] args)
         {
-            Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
-
             var pipeName = args
             .FirstOrDefault(x => x.StartsWith("--pipe-name=", StringComparison.OrdinalIgnoreCase))
             ?.Substring("--pipe-name=".Length);
@@ -19,23 +17,9 @@ namespace CefClient
             var defaultSubprocessPath = Path.Combine(AppContext.BaseDirectory, "CefSharp.BrowserSubprocess.exe");
 
             var rootCachePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "User Data");
-
-            var userDataRoot = Path.Combine(AppContext.BaseDirectory, "User Data");
-            Directory.CreateDirectory(userDataRoot);
-
-            var settings = new CefSharp.OffScreen.CefSettings
-            {
-                 BrowserSubprocessPath = defaultSubprocessPath,
-                 RootCachePath = userDataRoot
-            };
-
-            settings.CefCommandLineArgs.Add("enable-media-stream");
-            settings.CefCommandLineArgs.Add("use-fake-ui-for-media-stream");
-            settings.CefCommandLineArgs.Add("enable-usermedia-screen-capturing");
-
-            Cef.Initialize(settings, performDependencyCheck: false);
-
             ApplicationConfiguration.Initialize();
+            Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+
             Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
 
             Application.ThreadException += (sender, e) =>
@@ -57,6 +41,20 @@ namespace CefClient
             {
                 e.SetObserved();
             };
+
+            var settings = new CefSharp.OffScreen.CefSettings
+            {
+                 BrowserSubprocessPath = defaultSubprocessPath,
+                 RootCachePath = rootCachePath,
+                 //CachePath = userDataRoot,
+                 PersistSessionCookies = false,
+            };
+
+            settings.CefCommandLineArgs.Add("enable-media-stream");
+            settings.CefCommandLineArgs.Add("use-fake-ui-for-media-stream");
+            settings.CefCommandLineArgs.Add("enable-usermedia-screen-capturing");
+
+            Cef.Initialize(settings, performDependencyCheck: true, browserProcessHandler: null);
 
             Application.ApplicationExit += (sender, e) =>
             {

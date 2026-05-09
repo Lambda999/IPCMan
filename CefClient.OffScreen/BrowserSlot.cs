@@ -139,8 +139,7 @@ namespace CefClient
 
                 // OSR 模式每次 runBrowser 都是一次性浏览：创建、浏览、截图、返回后由 using 自动释放。
                 await Task.Delay(TimeSpan.FromMilliseconds(firstScreenshotDelayMs), cancellationToken);
-                var firstScreenshotShown = await TryCaptureAndShowScreenshotAsync(browser, screenshotTimeoutMs, cancellationToken);
-
+ 
                 WaitForNavigationAsyncResponse? loadResponse = null;
                 var loadTimedOut = false;
                 try
@@ -167,8 +166,7 @@ namespace CefClient
                             ["cachePath"] = cachePath,
                             ["loadErrorCode"] = loadResponse?.ErrorCode.ToString() ?? string.Empty,
                             ["httpStatusCode"] = loadResponse?.HttpStatusCode ?? -1,
-                            ["firstScreenshotShown"] = firstScreenshotShown,
-                            ["screenshotShown"] = firstScreenshotShown,
+                            ["screenshotShown"] = false,
                             ["osrOneShot"] = true,
                             ["disposedByRunAsync"] = true
                         }
@@ -176,22 +174,15 @@ namespace CefClient
                 }
 
                 var title = await GetPageTitleAsync(browser, titleTimeoutMs, cancellationToken);
-
-                var finalScreenshotShown = false;
-                if (finalScreenshotDelayMs > 0)
-                {
-                    await Task.Delay(TimeSpan.FromMilliseconds(finalScreenshotDelayMs), cancellationToken);
-                    finalScreenshotShown = await TryCaptureAndShowScreenshotAsync(browser, screenshotTimeoutMs, cancellationToken);
-                }
-
-                var screenshotShown = firstScreenshotShown || finalScreenshotShown;
+                await Task.Delay(TimeSpan.FromMilliseconds(finalScreenshotDelayMs), cancellationToken);
+                var screenshotShown = await TryCaptureAndShowScreenshotAsync(browser, screenshotTimeoutMs, cancellationToken);
                 var loadCompleted = loadResponse != null && !loadTimedOut && loadResponse.ErrorCode == CefErrorCode.None;
 
                 return new BrowserRunResult
                 {
                     BrowserId = BrowserId,
                     Success = true,
-                    Message = loadCompleted ? "执行成功" : "页面加载较慢，已按超时继续",
+                    Message = loadCompleted ? $"执行成功:{cachePath}" : "页面加载较慢，已按超时继续",
                     Data = new JsonObject
                     {
                         ["title"] = title ?? "",
@@ -203,8 +194,6 @@ namespace CefClient
                         ["loadTimeoutMs"] = loadTimeoutMs,
                         ["cachePath"] = cachePath,
                         ["screenshotShown"] = screenshotShown,
-                        ["firstScreenshotShown"] = firstScreenshotShown,
-                        ["finalScreenshotShown"] = finalScreenshotShown,
                         ["osrOneShot"] = true,
                         ["disposedByRunAsync"] = true
                     }
