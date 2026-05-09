@@ -38,27 +38,22 @@ namespace CefClient
         }
 
 
-        public async Task<bool> CreateBrowserAsync(string browserId, CancellationToken cancellationToken = default)
+        public async Task<bool> CreateBrowserAsync(string? taskId, string browserId, CancellationToken cancellationToken = default)
         {
             if (_slots.ContainsKey(browserId))
                 return true;
 
             var slot = await UiInvokeAsync(() =>
             {
-                var cacheRoot = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "CefSharp",
-                    "TaskSlots",
-                    $"proc_{Environment.ProcessId}");
+                Directory.CreateDirectory(CefCachePaths.RootCachePath);
 
-                Directory.CreateDirectory(cacheRoot);
-
-                var cachePath = Path.Combine(cacheRoot, browserId);
+                var cachePath = CefCachePaths.RootCachePath;
                 Directory.CreateDirectory(cachePath);
 
                 var requestContext = new RequestContext(new RequestContextSettings
                 {
                     CachePath = cachePath,
+                    PersistUserPreferences = true,
                     PersistSessionCookies = false,
                 });
 

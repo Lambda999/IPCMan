@@ -1,4 +1,4 @@
-namespace CefClient
+﻿namespace CefClient
 {
     using CefClient.Handler;
     using CefSharp;
@@ -11,9 +11,9 @@ namespace CefClient
     public sealed class BrowserSlot : IAsyncDisposable
     {
         private const int DefaultLoadTimeoutMs = 8000;
-        private const int DefaultFirstScreenshotDelayMs = 500;
+        private const int DefaultFirstScreenshotDelayMs = 1000;
         private const int DefaultFinalScreenshotDelayMs = 1500;
-        private const int DefaultScreenshotTimeoutMs = 1500;
+        private const int DefaultScreenshotTimeoutMs = 3000;
         private const int DefaultTitleTimeoutMs = 1000;
         private const int DefaultInitialLoadTimeoutMs = 5000;
 
@@ -83,10 +83,7 @@ namespace CefClient
                 };
             }
 
-            var consumerId = payload?["consumerId"]?.ToString() ?? "unknown";
-            var uvIndex = payload?["uvIndex"]?.ToString() ?? BrowserId;
-            var userDataRoot = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "User Data");
-            var cachePath = Path.Combine(userDataRoot, consumerId, uvIndex);
+            var cachePath = CefCachePaths.RootCachePath;
             Directory.CreateDirectory(cachePath);
 
             var os = GetNullableInt(payload, "os") ?? 0;
@@ -96,13 +93,14 @@ namespace CefClient
 
             var browserSettings = new BrowserSettings
             {
-                WindowlessFrameRate = 1,
+                WindowlessFrameRate = 15,
             };
 
             var requestContextSettings = new RequestContextSettings
             {
                 PersistSessionCookies = true,
-                CachePath = cachePath
+                CachePath = cachePath,
+                PersistUserPreferences = true
             };
 
             try
@@ -283,8 +281,9 @@ namespace CefClient
             {
                 throw;
             }
-            catch
+            catch (Exception ex)
             {
+                _log($"{BrowserId}: screenshot capture failed: {ex.Message}");
                 return false;
             }
         }

@@ -19,6 +19,7 @@ namespace MainClient.Ipc
 
         private readonly string _exePath;
         private readonly string _pipeName;
+        private readonly string? _rootCachePath;
         private readonly TimeSpan _startTimeout;
         private readonly CancellationTokenSource _disposeCts = new();
         private readonly SemaphoreSlim _writeLock = new(1, 1);
@@ -58,9 +59,11 @@ namespace MainClient.Ipc
 
         public CefClientSession(
             string exePath,
-            TimeSpan? startTimeout = null)
+            TimeSpan? startTimeout = null,
+            string? rootCachePath = null)
         {
             _exePath = exePath;
+            _rootCachePath = rootCachePath;
             _startTimeout = startTimeout ?? TimeSpan.FromSeconds(10);
             _pipeName = $"cefclient_pipe_{Environment.ProcessId}_{Guid.NewGuid():N}";
 
@@ -80,11 +83,14 @@ namespace MainClient.Ipc
             var psi = new ProcessStartInfo
             {
                 FileName = _exePath,
-                Arguments = $"--pipe-name={_pipeName}",
                 UseShellExecute = false,
-                CreateNoWindow = true,
+                CreateNoWindow = false,
                 WorkingDirectory = Path.GetDirectoryName(_exePath)!
             };
+
+            psi.ArgumentList.Add($"--pipe-name={_pipeName}");
+            if (!string.IsNullOrWhiteSpace(_rootCachePath))
+                psi.ArgumentList.Add($"--root-cache-path={Path.GetFullPath(_rootCachePath)}");
 
             var process = new Process
             {
