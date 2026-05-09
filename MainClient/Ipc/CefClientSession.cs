@@ -107,7 +107,24 @@ namespace MainClient.Ipc
                 cancellationToken, _disposeCts.Token);
             cts.CancelAfter(_startTimeout);
 
-            await _pipeServer.WaitForConnectionAsync(cts.Token);
+            try
+            {
+                var connectTask = _pipeServer.WaitForConnectionAsync(cts.Token);
+                var exitTask = process.WaitForExitAsync(CancellationToken.None);
+                var completedTask = await Task.WhenAny(connectTask, exitTask);
+                if (completedTask == exitTask)
+                {
+                    throw new InvalidOperationException(
+                        $"{Path.GetFileName(_exePath)} 在连接管道前已退出，ExitCode={SafeGetExitCode(process)}, pipe={_pipeName}");
+                }
+
+                await connectTask;
+            }
+            catch (OperationCanceledException) when (cts.IsCancellationRequested)
+            {
+                throw new TimeoutException(
+                    $"等待 {Path.GetFileName(_exePath)} 连接管道超时，timeout={(int)_startTimeout.TotalSeconds}s, pipe={_pipeName}, process={SafeGetProcessState(process)}");
+            }
 
             _reader = new StreamReader(_pipeServer, new UTF8Encoding(false), false, 4096, leaveOpen: true);
             _writer = new StreamWriter(_pipeServer, new UTF8Encoding(false), 4096, leaveOpen: true)
@@ -118,7 +135,42 @@ namespace MainClient.Ipc
             _readLoopTask = Task.Run(() => ReadLoopAsync(_disposeCts.Token));
 
             using var reg = cts.Token.Register(() => _readyTcs.TrySetCanceled(cts.Token));
-            await _readyTcs.Task;
+            try
+            {
+                await _readyTcs.Task;
+            }
+            catch (OperationCanceledException) when (cts.IsCancellationRequested)
+            {
+                throw new TimeoutException(
+                    $"等待 {Path.GetFileName(_exePath)} ready 消息超时，timeout={(int)_startTimeout.TotalSeconds}s, pipe={_pipeName}, process={SafeGetProcessState(process)}");
+            }
+        }
+
+
+        private static string SafeGetExitCode(Process process)
+        {
+            try
+            {
+                return process.HasExited ? process.ExitCode.ToString() : "running";
+            }
+            catch
+            {
+                return "unknown";
+            }
+        }
+
+        private static string SafeGetProcessState(Process process)
+        {
+            try
+            {
+                return process.HasExited
+                    ? $"exited: ExitCode={process.ExitCode}"
+                    : $"running: Pid={process.Id}";
+            }
+            catch
+            {
+                return "unknown";
+            }
         }
 
         public async Task StartTaskAsync(string taskId, JsonNode? payload, CancellationToken cancellationToken = default)
