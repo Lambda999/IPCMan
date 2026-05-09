@@ -1,4 +1,4 @@
-namespace CefClient
+﻿namespace CefClient
 {
     using CefClient.Handler;
     using CefSharp;
@@ -83,10 +83,11 @@ namespace CefClient
                 };
             }
 
+            var taskId = payload?["taskId"]?.ToString() ?? BrowserId;
             var consumerId = payload?["consumerId"]?.ToString() ?? "unknown";
             var uvIndex = payload?["uvIndex"]?.ToString() ?? BrowserId;
-            var userDataRoot = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "User Data");
-            var cachePath = Path.Combine(userDataRoot, consumerId, uvIndex);
+            Directory.CreateDirectory(CefCachePaths.RootCachePath);
+            var cachePath = CefCachePaths.GetUvCachePath(taskId, consumerId, uvIndex, BrowserId);
             Directory.CreateDirectory(cachePath);
 
             var os = GetNullableInt(payload, "os") ?? 0;
