@@ -1,4 +1,4 @@
-using MainClient.Common;
+﻿using MainClient.Common;
 using MainClient.Infrastructure;
 using MainClient.Ipc;
 using MainClient.Logging;
@@ -529,13 +529,21 @@ namespace MainClient
                 cefProcessDirectory,
                 cefProcessFileName);
 
+            var cefRootCachePath = Path.Combine(
+                Path.GetDirectoryName(cefExePath)!,
+                "User Data");
+            Directory.CreateDirectory(cefRootCachePath);
+
             _logger.LogInformation(
-                "Use {CefProcessFileName} for taskId={TaskId}, osrMode={IsOsrMode}",
+                "Use {CefProcessFileName} for taskId={TaskId}, uniqueId={UniqueId}, consumer={ConsumerId}, osrMode={IsOsrMode}, rootCachePath={RootCachePath}",
                 cefProcessFileName,
                 ctx.TaskId,
-                _appSettings.IsOsrMode);
+                ctx.UniqueId,
+                consumerId,
+                _appSettings.IsOsrMode,
+                cefRootCachePath);
 
-            await using var session = new CefClientSession(cefExePath, TimeSpan.FromSeconds(15));
+            await using var session = new CefClientSession(cefExePath, TimeSpan.FromSeconds(15), cefRootCachePath);
 
             session.OnLog += message =>
             {
@@ -850,7 +858,6 @@ namespace MainClient
         }
 
 
-
         private JsonObject BuildStartPayload(ConsumerTaskContext ctx, JToken rawTask)
         {
             return new JsonObject
@@ -886,9 +893,9 @@ namespace MainClient
                 ["url"] = ctx.Url,
                 // OSR 端用这些短超时防止慢页面长期占住本次 UV，影响后续任务调度。
                 ["loadTimeoutMs"] = 8000,
-                ["firstScreenshotDelayMs"] = 500,
+                ["firstScreenshotDelayMs"] = 1000,
                 ["finalScreenshotDelayMs"] = 1500,
-                ["screenshotTimeoutMs"] = 1500,
+                ["screenshotTimeoutMs"] = 3000,
                 ["titleTimeoutMs"] = 1000,
             };
         }

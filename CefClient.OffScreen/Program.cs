@@ -1,4 +1,4 @@
-using CefSharp;
+﻿using CefSharp;
 using CefSharp.OffScreen;
 using System;
 using System.Windows.Forms;
@@ -14,9 +14,17 @@ namespace CefClient
             .FirstOrDefault(x => x.StartsWith("--pipe-name=", StringComparison.OrdinalIgnoreCase))
             ?.Substring("--pipe-name=".Length);
 
+            var rootCachePath = args
+                .FirstOrDefault(x => x.StartsWith("--root-cache-path=", StringComparison.OrdinalIgnoreCase))
+                ?.Substring("--root-cache-path=".Length);
+            if (string.IsNullOrWhiteSpace(rootCachePath))
+                rootCachePath = CefCachePaths.RootCachePath;
+
+            CefCachePaths.RootCachePath = Path.GetFullPath(rootCachePath);
+
             var defaultSubprocessPath = Path.Combine(AppContext.BaseDirectory, "CefSharp.BrowserSubprocess.exe");
 
-            var rootCachePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "User Data");
+            rootCachePath = CefCachePaths.RootCachePath;
             ApplicationConfiguration.Initialize();
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
 
@@ -42,12 +50,16 @@ namespace CefClient
                 e.SetObserved();
             };
 
+            Directory.CreateDirectory(rootCachePath);
+            Directory.CreateDirectory(CefCachePaths.DefaultCachePath);
+
             var settings = new CefSharp.OffScreen.CefSettings
             {
                  BrowserSubprocessPath = defaultSubprocessPath,
-                 //RootCachePath = rootCachePath,
-                 //CachePath = userDataRoot,
+                 RootCachePath = CefCachePaths.RootCachePath,
+                 CachePath = CefCachePaths.DefaultCachePath,
                  PersistSessionCookies = false,
+                 PersistUserPreferences = true,
             };
 
             settings.CefCommandLineArgs.Add("enable-media-stream");

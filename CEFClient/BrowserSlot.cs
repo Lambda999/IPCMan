@@ -13,6 +13,7 @@ namespace CefClient
         public Panel HostPanel { get; }
         public ChromiumWebBrowser Browser { get; }
         public IRequestContext RequestContext { get; }
+        public string CachePath { get; }
         private readonly Control _parent;
         private int _disposed;
 
@@ -21,12 +22,14 @@ namespace CefClient
             Panel hostPanel,
             ChromiumWebBrowser browser,
             IRequestContext requestContext,
+            string cachePath,
             Control parent)
         {
             BrowserId = browserId;
             HostPanel = hostPanel;
             Browser = browser;
             RequestContext = requestContext;
+            CachePath = cachePath;
             _parent = parent;
         }
         private async Task<string> GetPageTitleAsync(ChromiumWebBrowser browser, int timeoutMs = 3000)
@@ -104,7 +107,8 @@ namespace CefClient
                     Data = new JsonObject
                     {
                         ["title"] = title ?? "",
-                        ["url"] = url
+                        ["url"] = url,
+                        ["cachePath"] = CachePath
                     }
                 };
             }
