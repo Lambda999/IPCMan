@@ -13,6 +13,16 @@ namespace CefClient
             .FirstOrDefault(x => x.StartsWith("--pipe-name=", StringComparison.OrdinalIgnoreCase))
             ?.Substring("--pipe-name=".Length);
 
+            var consumerId = args
+            .FirstOrDefault(x => x.StartsWith("--consumer-id=", StringComparison.OrdinalIgnoreCase))
+            ?.Substring("--consumer-id=".Length);
+
+            if (!string.IsNullOrWhiteSpace(consumerId))
+            {
+                CefCachePaths.RootCachePath = CefCachePaths.GetConsumerRootCachePath(consumerId);
+            }
+
+            Directory.CreateDirectory(CefCachePaths.RootCachePath);
 
             var defaultSubprocessPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "CefSharp.BrowserSubprocess.exe");
  

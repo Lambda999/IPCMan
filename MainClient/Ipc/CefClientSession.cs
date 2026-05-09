@@ -19,6 +19,7 @@ namespace MainClient.Ipc
 
         private readonly string _exePath;
         private readonly string _pipeName;
+        private readonly string? _consumerId;
         private readonly TimeSpan _startTimeout;
         private readonly CancellationTokenSource _disposeCts = new();
         private readonly SemaphoreSlim _writeLock = new(1, 1);
@@ -58,9 +59,11 @@ namespace MainClient.Ipc
 
         public CefClientSession(
             string exePath,
-            TimeSpan? startTimeout = null)
+            TimeSpan? startTimeout = null,
+            string? consumerId = null)
         {
             _exePath = exePath;
+            _consumerId = string.IsNullOrWhiteSpace(consumerId) ? null : consumerId;
             _startTimeout = startTimeout ?? TimeSpan.FromSeconds(10);
             _pipeName = $"cefclient_pipe_{Environment.ProcessId}_{Guid.NewGuid():N}";
 
@@ -86,6 +89,8 @@ namespace MainClient.Ipc
             };
 
             psi.ArgumentList.Add($"--pipe-name={_pipeName}");
+            if (!string.IsNullOrWhiteSpace(_consumerId))
+                psi.ArgumentList.Add($"--consumer-id={_consumerId}");
 
             var process = new Process
             {
