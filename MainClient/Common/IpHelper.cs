@@ -324,7 +324,7 @@ namespace MainClient.Common
                                     var m2 = Regex.Match(address[1], @"\w+");
                                     if (m2.Success)
                                     {
-                                        var area_city = area_prov["mallCityList"].FirstOrDefault(w => w["cityName"].ToString().Contains(m2.Value));
+                                        var area_city = area_prov["mallCityList"]?.AsArray().FirstOrDefault(w => w?["cityName"]?.ToString().Contains(m2.Value) == true);
                                         if (area_city != null)
                                         {
                                             if (Regex.IsMatch(url, @"regionCode=[\w]*[^&]?"))
