@@ -92,6 +92,8 @@ namespace CefClient
             var device = payload?["device"];
             var sw = GetNullableInt(device, "sw") ?? 412;
             var sh = GetNullableInt(device, "sh") ?? 915;
+            var ua = payload?["userAgent"]?.ToString() ?? string.Empty;
+            var platform = os == 1 ? "Android" : "iPhone";
 
             var browserSettings = new BrowserSettings
             {
@@ -114,12 +116,13 @@ namespace CefClient
                 };
                 await browser.WaitForInitialLoadAsync()
                     .WaitAsync(TimeSpan.FromMilliseconds(DefaultInitialLoadTimeoutMs), cancellationToken);
+
                 using var devToolsClient = browser.GetDevToolsClient();
 
                 await devToolsClient.Storage.ClearDataForOriginAsync("*", "cache_storage,cookies,local_storage");
                 await devToolsClient.Emulation.SetTouchEmulationEnabledAsync(true, Random.Shared.Next(4, 6));
                 await devToolsClient.Emulation.SetDeviceMetricsOverrideAsync(width: sw, height: sh, deviceScaleFactor: 1, mobile: true);
-                await devToolsClient.Emulation.SetUserAgentOverrideAsync(userAgent: payload?["userAgent"]?.ToString() ?? string.Empty, platform: os == 1 ? "Android" : "iPhone");
+                await devToolsClient.Emulation.SetUserAgentOverrideAsync(userAgent: ua, platform: platform);
 
                 var loadTimeoutMs = GetPositiveInt(payload, "loadTimeoutMs", DefaultLoadTimeoutMs);
                 var firstScreenshotDelayMs = GetPositiveInt(payload, "firstScreenshotDelayMs", DefaultFirstScreenshotDelayMs);
