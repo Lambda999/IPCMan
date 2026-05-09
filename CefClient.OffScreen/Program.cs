@@ -14,9 +14,17 @@ namespace CefClient
             .FirstOrDefault(x => x.StartsWith("--pipe-name=", StringComparison.OrdinalIgnoreCase))
             ?.Substring("--pipe-name=".Length);
 
+            var rootCachePath = args
+                .FirstOrDefault(x => x.StartsWith("--root-cache-path=", StringComparison.OrdinalIgnoreCase))
+                ?.Substring("--root-cache-path=".Length);
+            if (string.IsNullOrWhiteSpace(rootCachePath))
+                rootCachePath = CefCachePaths.RootCachePath;
+
+            CefCachePaths.RootCachePath = Path.GetFullPath(rootCachePath);
+
             var defaultSubprocessPath = Path.Combine(AppContext.BaseDirectory, "CefSharp.BrowserSubprocess.exe");
 
-            var rootCachePath = CefCachePaths.RootCachePath;
+            rootCachePath = CefCachePaths.RootCachePath;
             ApplicationConfiguration.Initialize();
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
 
@@ -48,7 +56,9 @@ namespace CefClient
             {
                  BrowserSubprocessPath = defaultSubprocessPath,
                  RootCachePath = rootCachePath,
+                 CachePath = rootCachePath,
                  PersistSessionCookies = false,
+                 PersistUserPreferences = true,
             };
 
             settings.CefCommandLineArgs.Add("enable-media-stream");

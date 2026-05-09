@@ -90,7 +90,7 @@ namespace CefClient
                 browserSettings.ImageLoading = CefState.Disabled;
             }
             var cacheIndex = _args["cacheIndex"].ToString();
-            var cachePath = CefCachePaths.GetLegacyCachePath(cacheIndex);
+            var cachePath = CefCachePaths.RootCachePath;
             if (!System.IO.Directory.Exists(cachePath))
             {
                 System.IO.Directory.CreateDirectory(cachePath);
@@ -99,6 +99,7 @@ namespace CefClient
             var requestContextSettings = new RequestContextSettings
             {
                 CachePath = cachePath,
+                PersistUserPreferences = true,
                 //PersistSessionCookies = true,
                 //PersistUserPreferences = true,
                 // IgnoreCertificateErrors = true,

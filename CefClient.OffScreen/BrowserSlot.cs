@@ -11,9 +11,9 @@
     public sealed class BrowserSlot : IAsyncDisposable
     {
         private const int DefaultLoadTimeoutMs = 8000;
-        private const int DefaultFirstScreenshotDelayMs = 500;
+        private const int DefaultFirstScreenshotDelayMs = 1000;
         private const int DefaultFinalScreenshotDelayMs = 1500;
-        private const int DefaultScreenshotTimeoutMs = 1500;
+        private const int DefaultScreenshotTimeoutMs = 3000;
         private const int DefaultTitleTimeoutMs = 1000;
         private const int DefaultInitialLoadTimeoutMs = 5000;
 
@@ -83,11 +83,7 @@
                 };
             }
 
-            var taskId = payload?["taskId"]?.ToString() ?? BrowserId;
-            var consumerId = payload?["consumerId"]?.ToString() ?? "unknown";
-            var uvIndex = payload?["uvIndex"]?.ToString() ?? BrowserId;
-            Directory.CreateDirectory(CefCachePaths.RootCachePath);
-            var cachePath = CefCachePaths.GetUvCachePath(taskId, consumerId, uvIndex, BrowserId);
+            var cachePath = CefCachePaths.RootCachePath;
             Directory.CreateDirectory(cachePath);
 
             var os = GetNullableInt(payload, "os") ?? 0;
@@ -97,13 +93,14 @@
 
             var browserSettings = new BrowserSettings
             {
-                WindowlessFrameRate = 1,
+                WindowlessFrameRate = 15,
             };
 
             var requestContextSettings = new RequestContextSettings
             {
                 PersistSessionCookies = true,
-                CachePath = cachePath
+                CachePath = cachePath,
+                PersistUserPreferences = true
             };
 
             try
@@ -284,8 +281,9 @@
             {
                 throw;
             }
-            catch
+            catch (Exception ex)
             {
+                _log($"{BrowserId}: screenshot capture failed: {ex.Message}");
                 return false;
             }
         }

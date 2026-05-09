@@ -47,12 +47,13 @@ namespace CefClient
             {
                 Directory.CreateDirectory(CefCachePaths.RootCachePath);
 
-                var cachePath = CefCachePaths.GetTaskSlotCachePath(taskId, browserId);
+                var cachePath = CefCachePaths.RootCachePath;
                 Directory.CreateDirectory(cachePath);
 
                 var requestContext = new RequestContext(new RequestContextSettings
                 {
                     CachePath = cachePath,
+                    PersistUserPreferences = true,
                     PersistSessionCookies = false,
                 });
 
