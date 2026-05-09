@@ -13,7 +13,7 @@ using System.Collections.Concurrent;
 using System.Management;
 using System.Text.RegularExpressions;
 using System.Threading.Channels;
-using System.Windows.Forms;
+ 
 
 namespace MainClient
 {
@@ -32,7 +32,7 @@ namespace MainClient
         private PipelineRunner<JsonNode>? _pipeline;
         private UiTaskRunner? _uiRunner;
         private AppAutoRestart? _appAutoRestart;
-        private readonly TaskStatsAggregator _aggregator;
+        private readonly AdTrafficAggregator _aggregator;
 
         #endregion
 
@@ -195,7 +195,7 @@ namespace MainClient
             AdeHelper adeHelper,
             IpHelper ipHelper,
             ProxyTester ipTester,
-            TaskStatsAggregator aggregator,
+            AdTrafficAggregator aggregator,
             AppSettings appSettings,
             IHttpClientFactory httpClientFactory,
             ILogger<MainForm> logger)
@@ -291,7 +291,7 @@ namespace MainClient
 
             try
             {
-                var host = await CommonHelper.GetHostAsync();
+                var host = await CommonHelper.GetLocalHostAsync();
                 while (!token.IsCancellationRequested)
                 {
                     var url = $"{_appSettings.TaskApiUrl}?type=1&action=getTask&name={_appSettings.TaskName}&host={System.Web.HttpUtility.UrlEncode(host)}&ver={AppConsts.AppVersion}&_t={DateTime.Now.Ticks}";
@@ -624,6 +624,7 @@ namespace MainClient
 
                         string browserId = $"uv_{uvIndex + 1}";
 
+                        _aggregator.EnqueueTaskState(new AdTrafficTaskStateEvent(ctx.TaskId, AdTrafficTaskStateKind.Request, 1));
                         try
                         {
                             var dev = await GetDeviceForTaskAsync(ctx.OS, ctx.TaskId, uvIndex, innerToken);
@@ -980,7 +981,7 @@ namespace MainClient
 
                 try
                 {
-                    _aggregator.EnqueueProxyIpFetched(ctx.TaskId, 1);
+                    _aggregator.EnqueueFetchedIp(ctx.TaskId, 1);
 
                     var ipEntity = await _ipHelper.GetProxyIpAsync(task);
                     if (ipEntity == null)
@@ -1012,7 +1013,7 @@ namespace MainClient
 
                     if (!string.IsNullOrWhiteSpace(ctx.RealIp))
                     {
-                        _aggregator.EnqueueProxyIpConsumed(ctx.TaskId, ctx.RealIp, 1);
+                        _aggregator.EnqueueConsumedIp(ctx.TaskId, ctx.RealIp, 1);
                     }
 
                     return;
@@ -1442,7 +1443,7 @@ namespace MainClient
             //}
 
 
-            //await _aggregator.StartAsync();
+            await _aggregator.StartAsync();
 
 
             InitPipelineRunner();
@@ -1519,10 +1520,11 @@ namespace MainClient
                 onTick: async token =>
                 {
                     var elapsed = runner.RunElapsed;
-                    //var totalStats = _aggregator.GetTotalStats();
-
+                    var totalStats = _aggregator.GetHostTaskStats();
                     this.InvokeOnUiThreadIfRequired(() =>
                     {
+                        label_request.Text = $"提交数量:{totalStats.Request}";
+
                         //label5.Text = $"提交数量:{totalStats.Request}";
                         //label6.Text = $"执行数量:{totalStats.Start}";
                         //label7.Text = $"曝光数量:{totalStats.DSP}";

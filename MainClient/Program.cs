@@ -121,7 +121,7 @@ namespace MainClient
 
                     //services.AddSingleton<ChineseNameGenerator>();
                     //services.AddSingleton<ChromiumSessionManager>();
-                    services.AddSingleton<TaskStatsAggregator>();
+                    services.AddSingleton<AdTrafficAggregator>();
                     services.AddSingleton<AdeHelper>();
                     services.AddSingleton<IpHelper>();
                     services.AddSingleton<ProxyTester>();

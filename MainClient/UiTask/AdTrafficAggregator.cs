@@ -1,288 +1,106 @@
+﻿using MainClient.Extensions;
+using MainClient.Infrastructure;
 using Microsoft.Extensions.Logging;
-using System.Text.Json.Nodes;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using System.Collections.Concurrent;
 using System.Threading.Channels;
-using MainClient.Infrastructure;
-using MainClient.Common;
+
+
 
 namespace MainClient.UiTask
 {
-
     #region Models
 
-    public enum ProxyIpState
+    public enum AdTrafficProxyIpKind
     {
         Fetched,
         Consumed
     }
 
-    public record TaskEvent(int TaskId, StateType Type, int Count, string? Data = null);
-
-    public record ProxyIpStatEvent(
+    public record AdTrafficTaskStateEvent(
         int TaskId,
-        ProxyIpState State,
+        AdTrafficTaskStateKind State,
+        int Count,
+        string? Data = null);
+
+    public record AdTrafficTaskProxyIpStateEvent(
+        int TaskId,
+        AdTrafficProxyIpKind Kind,
         string? Ip = null,
         int Count = 1
     );
 
-    public record AdWord(
-        [property: JsonPropertyName("category")] string Category,
-        [property: JsonPropertyName("word")] string Word
-    );
-
-
-    public sealed class AdKeywordDomain
-    {
-        [property: JsonPropertyName("keyword")]
-        public string Keyword { get; set; } = "";
-
-        [property: JsonPropertyName("domains")]
-        public List<string> Domains { get; set; } = new();
-
-        [property: JsonPropertyName("brands")]
-        public List<string> Brands { get; set; } = new();
-    }
-    public sealed class AdKeywordDomainAccumulator
-    {
-        public HashSet<string> Domains = new(StringComparer.OrdinalIgnoreCase);
-        public HashSet<string> Brands = new(StringComparer.OrdinalIgnoreCase);
-    }
-
-
-
-
-    public sealed class TaskStats
-    {
-        public long Request;
-        public long Start;
-        public long DSP;
-        public long Clickthrough;
-        public long Success;
-        public long Failure;
-        public long Complete;
-        public long HomepageTrigger;
-
-        private long _deltaStart;
-        private long _deltaDsp;
-        private long _deltaClickthrough;
-
-        public double ClickRatio => DSP == 0 ? 0 : (double)Clickthrough / DSP;
-        public double HomepageTriggerRatio => DSP == 0 ? 0 : (double)HomepageTrigger / DSP;
-
-        public void Add(StateType type, int count)
-        {
-            switch (type)
-            {
-                case StateType.Request:
-                    Interlocked.Add(ref Request, count);
-                    break;
-
-                case StateType.Start:
-                    Interlocked.Add(ref Start, count);
-                    Interlocked.Add(ref _deltaStart, count);
-                    break;
-
-                case StateType.DSP:
-                    Interlocked.Add(ref DSP, count);
-                    Interlocked.Add(ref _deltaDsp, count);
-                    break;
-
-                case StateType.Clickthrough:
-                    Interlocked.Add(ref Clickthrough, count);
-                    Interlocked.Add(ref _deltaClickthrough, count);
-                    break;
-
-                case StateType.Success:
-                    Interlocked.Add(ref Success, count);
-                    break;
-
-                case StateType.Failure:
-                    Interlocked.Add(ref Failure, count);
-                    break;
-
-                case StateType.Complete:
-                    Interlocked.Add(ref Complete, count);
-                    break;
-
-                case StateType.HomepageTrigger:
-                    Interlocked.Add(ref HomepageTrigger, count);
-                    break;
-            }
-        }
-
-        public TaskMetricDelta SnapshotDelta()
-        {
-            return new TaskMetricDelta(
-                Start: Interlocked.Read(ref _deltaStart),
-                Dsp: Interlocked.Read(ref _deltaDsp),
-                Click: Interlocked.Read(ref _deltaClickthrough)
-            );
-        }
-
-        public void CommitDelta(TaskMetricDelta delta)
-        {
-            if (delta.Start != 0) Interlocked.Add(ref _deltaStart, -delta.Start);
-            if (delta.Dsp != 0) Interlocked.Add(ref _deltaDsp, -delta.Dsp);
-            if (delta.Click != 0) Interlocked.Add(ref _deltaClickthrough, -delta.Click);
-        }
-
-        public Dictionary<string, long> ToMetricDictionary(TaskMetricDelta delta)
-        {
-            var dict = new Dictionary<string, long>(3);
-            if (delta.Start > 0) dict["start"] = delta.Start;
-            if (delta.Dsp > 0) dict["dsp"] = delta.Dsp;
-            if (delta.Click > 0) dict["click"] = delta.Click;
-            return dict;
-        }
-    }
-
-    public readonly record struct TaskMetricDelta(long Start, long Dsp, long Click)
+    public readonly record struct AdTrafficTaskStateSnapshot(long Start, long Dsp, long Click)
     {
         public bool IsEmpty => Start == 0 && Dsp == 0 && Click == 0;
     }
 
-    public readonly record struct ProxyIpSnapshot(long Fetched, long Consumed, string[] ConsumedIps)
+    public readonly record struct AdTrafficProxyIpStateSnapshot(long Fetched, long Consumed, string[] ConsumedIps)
     {
         public bool IsEmpty => Fetched == 0 && Consumed == 0 && (ConsumedIps == null || ConsumedIps.Length == 0);
     }
 
-    public sealed class ProxyIpStat
-    {
-        private long _fetched;
-        private long _consumed;
-
-        private readonly object _ipsLock = new();
-        private List<string> _pendingConsumedIps = new();
-
-        public void AddFetched(long value = 1)
-        {
-            if (value > 0)
-                Interlocked.Add(ref _fetched, value);
-        }
-
-        public void AddConsumed(long value = 1)
-        {
-            if (value > 0)
-                Interlocked.Add(ref _consumed, value);
-        }
-
-        public void AddConsumedIp(string ip)
-        {
-            if (string.IsNullOrWhiteSpace(ip))
-                return;
-
-            lock (_ipsLock)
-            {
-                _pendingConsumedIps.Add(ip);
-            }
-        }
-
-        public ProxyIpSnapshot Snapshot()
-        {
-            string[] ips;
-            lock (_ipsLock)
-            {
-                ips = _pendingConsumedIps.ToArray();
-            }
-
-            return new ProxyIpSnapshot(
-                Fetched: Interlocked.Read(ref _fetched),
-                Consumed: Interlocked.Read(ref _consumed),
-                ConsumedIps: ips
-            );
-        }
-
-        public void Commit(ProxyIpSnapshot snapshot)
-        {
-            if (snapshot.IsEmpty)
-                return;
-
-            if (snapshot.Fetched > 0)
-                Interlocked.Add(ref _fetched, -snapshot.Fetched);
-
-            if (snapshot.Consumed > 0)
-                Interlocked.Add(ref _consumed, -snapshot.Consumed);
-
-            if (snapshot.ConsumedIps.Length > 0)
-            {
-                lock (_ipsLock)
-                {
-                    int removeCount = Math.Min(snapshot.ConsumedIps.Length, _pendingConsumedIps.Count);
-                    if (removeCount > 0)
-                        _pendingConsumedIps.RemoveRange(0, removeCount);
-                }
-            }
-        }
-
-        public bool IsEmpty()
-        {
-            lock (_ipsLock)
-            {
-                return Interlocked.Read(ref _fetched) == 0
-                    && Interlocked.Read(ref _consumed) == 0
-                    && _pendingConsumedIps.Count == 0;
-            }
-        }
-    }
-
     #endregion
 
-    public sealed class LocalHourStats
+    public sealed class AdTrafficLocalHourTaskState
     {
         public string HourKey { get; }
 
-        public ConcurrentDictionary<int, ConcurrentDictionary<string, long>> Tasks { get; }
+        public ConcurrentDictionary<int, ConcurrentDictionary<string, long>> BufferData { get; }
 
-        public LocalHourStats(string hourKey)
+        public AdTrafficLocalHourTaskState(string hourKey)
         {
             HourKey = hourKey;
-            Tasks = new ConcurrentDictionary<int, ConcurrentDictionary<string, long>>(
+            BufferData = new ConcurrentDictionary<int, ConcurrentDictionary<string, long>>(
                 Environment.ProcessorCount, 32);
         }
     }
 
-    public sealed class TaskStatsAggregator : IAsyncDisposable, IDisposable
+    public sealed class AdTrafficAggregator : IAsyncDisposable, IDisposable
     {
         #region Fields
 
-        private readonly Channel<TaskEvent> _queue;
-        private readonly Channel<ProxyIpStatEvent> _proxyIpQueue;
-       
-        private readonly ConcurrentDictionary<int, TaskStats> _tasks = new();
-        private readonly ConcurrentDictionary<int, ProxyIpStat> _taskProxyIpStats = new();
+        /// <summary>
+        /// 任务队列
+        /// </summary>
+        private readonly Channel<AdTrafficTaskStateEvent> _taskStateQueue;
+        /// <summary>
+        /// Ip队列
+        /// </summary>
+        private readonly Channel<AdTrafficTaskProxyIpStateEvent> _proxyIpStateQueue;
 
-        private readonly TaskStats _totalStats = new();
+        private readonly ConcurrentDictionary<int, AdTrafficTaskStateEntity> _taskStates = new();
+        private readonly ConcurrentDictionary<int, AdTrafficProxyIpStateEntity> _proxyIpStates = new();
+        private readonly AdTrafficTaskStateEntity _hostTaskStates = new();
+        public readonly record struct TaskHourKey(int TaskId, string HourKey);
+        private static TaskHourKey GetClickHourKey(int taskId)
+        {
+            return new TaskHourKey(taskId, GetHourKey());
+        }
 
-        private readonly ConcurrentDictionary<int, TaskStats> _taskGlobalBaseline = new();
-        private readonly ConcurrentDictionary<int, double> _taskClickRates = new();
-        private readonly ConcurrentDictionary<int, SemaphoreSlim> _baselineInitLocks = new();
+        private readonly ConcurrentDictionary<TaskHourKey, AdTrafficTaskStateEntity> _taskGlobalBaseline = new();
+        private readonly ConcurrentDictionary<TaskHourKey, double> _taskClickRates = new();
+        private readonly ConcurrentDictionary<TaskHourKey, SemaphoreSlim> _baselineInitLocks = new();
 
         private readonly AdeHelper _adeHelper;
         private readonly AppSettings _appSettings;
         private readonly ILogger _logger;
-
         private CancellationTokenSource? _runCts;
         private readonly SemaphoreSlim _flushSemaphore;
         private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
-
         private readonly int _retryCount;
         private readonly int _maxConcurrentRequests;
-
-        private Task? _processQueueTask;
-        private Task? _processProxyIpQueueTask;
+        private Task? _processTaskQueue;
+        private Task? _processIpQueue;
         private Task? _flushLoopTask;
-
         // 0 = new, 1 = running, 2 = stopping, 3 = stopped, 4 = disposed
         private int _state;
 
         #endregion
 
-        public TaskStatsAggregator(
+        public AdTrafficAggregator(
             AdeHelper adeHelper,
             AppSettings appSettings,
-            ILogger<TaskStatsAggregator> logger,
+            ILogger<AdTrafficAggregator> logger,
             int maxConcurrentRequests = 5,
             int retryCount = 3)
         {
@@ -294,21 +112,22 @@ namespace MainClient.UiTask
             _maxConcurrentRequests = maxConcurrentRequests <= 0 ? 5 : maxConcurrentRequests;
             _flushSemaphore = new SemaphoreSlim(_maxConcurrentRequests);
 
-            var taskEventOptions = new UnboundedChannelOptions
-            {
-                SingleReader = true,
-                SingleWriter = false,
-                AllowSynchronousContinuations = false
-            };
 
-            var proxyEventOptions = new UnboundedChannelOptions
-            {
-                SingleReader = true,
-                SingleWriter = false,
-                AllowSynchronousContinuations = false
-            };
-            _queue = Channel.CreateUnbounded<TaskEvent>(taskEventOptions);
-            _proxyIpQueue = Channel.CreateUnbounded<ProxyIpStatEvent>(proxyEventOptions);
+            _taskStateQueue = Channel.CreateUnbounded<AdTrafficTaskStateEvent>(
+                new UnboundedChannelOptions
+                {
+                    SingleReader = true,
+                    SingleWriter = false,
+                    AllowSynchronousContinuations = false
+                });
+
+            _proxyIpStateQueue = Channel.CreateUnbounded<AdTrafficTaskProxyIpStateEvent>(
+                new UnboundedChannelOptions
+                {
+                    SingleReader = true,
+                    SingleWriter = false,
+                    AllowSynchronousContinuations = false
+                });
 
             _state = 0;
         }
@@ -331,16 +150,17 @@ namespace MainClient.UiTask
                     return;
 
                 if (state == 2)
-                    throw new InvalidOperationException("TaskStatsAggregator is stopping and cannot be started.");
+                    throw new InvalidOperationException("AdTrafficAggregator is stopping and cannot be started.");
 
                 if (state == 4)
-                    throw new ObjectDisposedException(nameof(TaskStatsAggregator));
+                    throw new ObjectDisposedException(nameof(AdTrafficAggregator));
 
                 _runCts = new CancellationTokenSource();
 
-                _processQueueTask = Task.Run(() => ProcessQueueAsync(_runCts.Token));
-                _processProxyIpQueueTask = Task.Run(() => ProcessProxyIpQueueAsync(_runCts.Token));
+                _processTaskQueue = Task.Run(() => ProcessTaskStateQueueAsync(_runCts.Token));
+                _processIpQueue = Task.Run(() => ProcessProxyIpQueueAsync(_runCts.Token));
                 _flushLoopTask = Task.Run(() => FlushLoopAsync(_runCts.Token));
+
 
                 Volatile.Write(ref _state, 1);
             }
@@ -371,8 +191,8 @@ namespace MainClient.UiTask
 
                 Volatile.Write(ref _state, 2);
 
-                _queue.Writer.TryComplete();
-                _proxyIpQueue.Writer.TryComplete();
+                _taskStateQueue.Writer.TryComplete();
+                _proxyIpStateQueue.Writer.TryComplete();
             }
             finally
             {
@@ -410,43 +230,50 @@ namespace MainClient.UiTask
 
         #region Public API
 
-        public void Enqueue(TaskEvent ev)
+        public void EnqueueTaskState(AdTrafficTaskStateEvent ev)
         {
             if (!IsStarted)
                 return;
 
-            _queue.Writer.TryWrite(ev);
+            _taskStateQueue.Writer.TryWrite(ev);
         }
 
-        public void EnqueueProxyIpFetched(int taskId, int count = 1)
+        public void EnqueueFetchedIp(int taskId, int count = 1)
         {
             if (!IsStarted)
                 return;
 
-            _proxyIpQueue.Writer.TryWrite(new ProxyIpStatEvent(taskId, ProxyIpState.Fetched, null, count));
+            _proxyIpStateQueue.Writer.TryWrite(new AdTrafficTaskProxyIpStateEvent(taskId, AdTrafficProxyIpKind.Fetched, null, count));
         }
 
-        public void EnqueueProxyIpConsumed(int taskId, string ip, int count = 1)
+        public void EnqueueConsumedIp(int taskId, string ip, int count = 1)
         {
             if (!IsStarted)
                 return;
 
-            _proxyIpQueue.Writer.TryWrite(new ProxyIpStatEvent(taskId, ProxyIpState.Consumed, ip, count));
+            _proxyIpStateQueue.Writer.TryWrite(new AdTrafficTaskProxyIpStateEvent(taskId, AdTrafficProxyIpKind.Consumed, ip, count));
         }
 
+        /// <summary>
+        /// 获取指定任务的执行状态
+        /// </summary>
+        /// <param name="taskId"></param>
+        /// <returns></returns>
+        public AdTrafficTaskStateEntity? GetTaskStateById(int taskId) => _taskStates.TryGetValue(taskId, out var stats) ? stats : null;
 
-        public TaskStats? GetTaskStats(int taskId)
-            => _tasks.TryGetValue(taskId, out var stats) ? stats : null;
-
-        public TaskStats GetTotalStats() => _totalStats;
-
+        /// <summary>
+        /// 获取主机的执行状态
+        /// </summary>
+        /// <returns></returns>
+        public AdTrafficTaskStateEntity GetHostTaskStats() => _hostTaskStates;
 
         public async Task<double> GetClickRatioAsync(int taskId, double taskCtr = 100)
         {
             await EnsureTaskBaselineAsync(taskId, taskCtr).ConfigureAwait(false);
 
-            var baseline = _taskGlobalBaseline[taskId];
-            var stats = _tasks.GetOrAdd(taskId, _ => new TaskStats());
+            var key = GetClickHourKey(taskId);
+            var baseline = _taskGlobalBaseline[key];
+            var stats = _taskStates.GetOrAdd(taskId, _ => new AdTrafficTaskStateEntity());
 
             long totalDsp = baseline.DSP + stats.DSP;
             if (totalDsp <= 0)
@@ -460,9 +287,10 @@ namespace MainClient.UiTask
         {
             await EnsureTaskBaselineAsync(taskId, taskCtr).ConfigureAwait(false);
 
-            var baseline = _taskGlobalBaseline[taskId];
-            var stats = _tasks.GetOrAdd(taskId, _ => new TaskStats());
-            var rate = _taskClickRates.TryGetValue(taskId, out var r) ? r : taskCtr;
+            var key = GetClickHourKey(taskId);
+            var baseline = _taskGlobalBaseline[key];
+            var stats = _taskStates.GetOrAdd(taskId, _ => new AdTrafficTaskStateEntity());
+            var rate = _taskClickRates.TryGetValue(key, out var r) ? r : taskCtr;
 
             if (rate <= 0)
                 return false;
@@ -477,19 +305,20 @@ namespace MainClient.UiTask
             return totalClick < targetClick;
         }
 
+
         #endregion
 
         #region Queue Processing
 
-        private async Task ProcessQueueAsync(CancellationToken token)
+        private async Task ProcessTaskStateQueueAsync(CancellationToken token)
         {
-            var buffer = new List<TaskEvent>(256);
+            var buffer = new List<AdTrafficTaskStateEvent>(256);
 
             try
             {
-                while (await _queue.Reader.WaitToReadAsync(token).ConfigureAwait(false))
+                while (await _taskStateQueue.Reader.WaitToReadAsync(token).ConfigureAwait(false))
                 {
-                    while (_queue.Reader.TryRead(out var ev))
+                    while (_taskStateQueue.Reader.TryRead(out var ev))
                     {
                         buffer.Add(ev);
 
@@ -499,9 +328,16 @@ namespace MainClient.UiTask
 
                     foreach (var item in buffer)
                     {
-                        var stats = _tasks.GetOrAdd(item.TaskId, _ => new TaskStats());
-                        stats.Add(item.Type, item.Count);
-                        _totalStats.Add(item.Type, item.Count);
+                        var state = _taskStates.GetOrAdd(item.TaskId, _ => new AdTrafficTaskStateEntity());
+
+                        if (item.State == AdTrafficTaskStateKind.X5Sec)
+                        {
+                           // _logger.LogX5Sec($"x5sec ip={item.Data}");
+                            continue;
+                        }
+
+                        state.Add(item.State, item.Count);
+                        _hostTaskStates.Add(item.State, item.Count);
                     }
 
                     buffer.Clear();
@@ -510,7 +346,7 @@ namespace MainClient.UiTask
             catch (OperationCanceledException) { }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "ProcessQueueAsync crashed.");
+                _logger.LogError(ex, "ProcessTaskStateQueueAsync crashed.");
             }
         }
 
@@ -518,13 +354,13 @@ namespace MainClient.UiTask
         {
             try
             {
-                while (await _proxyIpQueue.Reader.WaitToReadAsync(token).ConfigureAwait(false))
+                while (await _proxyIpStateQueue.Reader.WaitToReadAsync(token).ConfigureAwait(false))
                 {
-                    while (_proxyIpQueue.Reader.TryRead(out var ev))
+                    while (_proxyIpStateQueue.Reader.TryRead(out var ev))
                     {
-                        var stat = _taskProxyIpStats.GetOrAdd(ev.TaskId, _ => new ProxyIpStat());
+                        var stat = _proxyIpStates.GetOrAdd(ev.TaskId, _ => new AdTrafficProxyIpStateEntity());
 
-                        if (ev.State == ProxyIpState.Fetched)
+                        if (ev.Kind == AdTrafficProxyIpKind.Fetched)
                         {
                             stat.AddFetched(ev.Count);
                         }
@@ -543,8 +379,6 @@ namespace MainClient.UiTask
                 _logger.LogError(ex, "ProcessProxyIpQueueAsync crashed.");
             }
         }
-
-
 
 
         #endregion
@@ -577,26 +411,26 @@ namespace MainClient.UiTask
         {
             var flushTasks = new List<Task>(64);
 
-            foreach (var pair in _tasks)
+            foreach (var pair in _taskStates)
             {
                 int taskId = pair.Key;
-                TaskStats stats = pair.Value;
+                AdTrafficTaskStateEntity state = pair.Value;
 
-                var delta = stats.SnapshotDelta();
-                if (delta.IsEmpty)
+                var snapshot = state.GetSnapshot();
+                if (snapshot.IsEmpty)
                     continue;
 
-                var metrics = stats.ToMetricDictionary(delta);
+                var metrics = state.ToMetricDictionary(snapshot);
                 if (metrics.Count == 0)
                     continue;
 
-                flushTasks.Add(FlushTaskStatsAsync(taskId, stats, delta, metrics, token));
+                flushTasks.Add(FlushTaskStateAsync(taskId, state, snapshot, metrics, token));
             }
 
-            foreach (var pair in _taskProxyIpStats)
+            foreach (var pair in _proxyIpStates)
             {
                 int taskId = pair.Key;
-                ProxyIpStat stat = pair.Value;
+                AdTrafficProxyIpStateEntity stat = pair.Value;
 
                 var snapshot = stat.Snapshot();
                 if (snapshot.IsEmpty)
@@ -606,29 +440,27 @@ namespace MainClient.UiTask
                 if (snapshot.Fetched > 0) metrics["fetched"] = snapshot.Fetched;
                 if (snapshot.Consumed > 0) metrics["consumed"] = snapshot.Consumed;
 
-                flushTasks.Add(FlushProxyIpAsync(taskId, stat, snapshot, metrics, token));
+                flushTasks.Add(FlushProxyIpStateAsync(taskId, stat, snapshot, metrics, token));
             }
 
             {
-                var delta = _totalStats.SnapshotDelta();
+                var delta = _hostTaskStates.GetSnapshot();
                 if (!delta.IsEmpty)
                 {
-                    var metrics = _totalStats.ToMetricDictionary(delta);
+                    var metrics = _hostTaskStates.ToMetricDictionary(delta);
                     if (metrics.Count > 0)
-                        flushTasks.Add(FlushTotalStatsAsync(delta, metrics, token));
+                        flushTasks.Add(FlushHostStateAsync(delta, metrics, token));
                 }
             }
- 
- 
 
             if (flushTasks.Count > 0)
                 await Task.WhenAll(flushTasks).ConfigureAwait(false);
         }
 
-        private async Task FlushTaskStatsAsync(
+        private async Task FlushTaskStateAsync(
             int taskId,
-            TaskStats stats,
-            TaskMetricDelta delta,
+            AdTrafficTaskStateEntity stats,
+            AdTrafficTaskStateSnapshot snapshot,
             Dictionary<string, long> metrics,
             CancellationToken token)
         {
@@ -636,11 +468,11 @@ namespace MainClient.UiTask
             try
             {
                 await RetryAsync(
-                    () => _adeHelper.UpdateTaskStatusAsync(taskId, metrics, token),
+                    () => _adeHelper.UpdateTaskStateAsync(taskId, metrics, token),
                     _retryCount,
                     token).ConfigureAwait(false);
 
-                stats.CommitDelta(delta);
+                stats.Commit(snapshot);
             }
             catch (Exception ex)
             {
@@ -652,10 +484,10 @@ namespace MainClient.UiTask
             }
         }
 
-        private async Task FlushProxyIpAsync(
+        private async Task FlushProxyIpStateAsync(
             int taskId,
-            ProxyIpStat stat,
-            ProxyIpSnapshot snapshot,
+            AdTrafficProxyIpStateEntity stat,
+            AdTrafficProxyIpStateSnapshot snapshot,
             Dictionary<string, long> metrics,
             CancellationToken token)
         {
@@ -663,7 +495,7 @@ namespace MainClient.UiTask
             try
             {
                 await RetryAsync(
-                    () => _adeHelper.UpdateProxyIpStatAsync(
+                    () => _adeHelper.UpdateProxyIpStateAsync(
                         taskId,
                         metrics,
                         snapshot.ConsumedIps.ToList(),
@@ -683,8 +515,8 @@ namespace MainClient.UiTask
             }
         }
 
-        private async Task FlushTotalStatsAsync(
-            TaskMetricDelta delta,
+        private async Task FlushHostStateAsync(
+            AdTrafficTaskStateSnapshot delta,
             Dictionary<string, long> metrics,
             CancellationToken token)
         {
@@ -692,11 +524,11 @@ namespace MainClient.UiTask
             try
             {
                 await RetryAsync(
-                    () => _adeHelper.UpdateHostStatusAsync(metrics, token),
+                    () => _adeHelper.UpdateHostStateAsync(metrics, token),
                     _retryCount,
                     token).ConfigureAwait(false);
 
-                _totalStats.CommitDelta(delta);
+                _hostTaskStates.Commit(delta);
             }
             catch (Exception ex)
             {
@@ -707,8 +539,6 @@ namespace MainClient.UiTask
                 _flushSemaphore.Release();
             }
         }
-
-
 
 
         #endregion
@@ -750,8 +580,9 @@ namespace MainClient.UiTask
         {
             var tasks = new List<Task>(3);
 
-            if (_processQueueTask != null) tasks.Add(_processQueueTask);
-            if (_processProxyIpQueueTask != null) tasks.Add(_processProxyIpQueueTask);
+            if (_processTaskQueue != null) tasks.Add(_processTaskQueue);
+            if (_processIpQueue != null) tasks.Add(_processIpQueue);
+
             if (tasks.Count > 0)
                 await Task.WhenAll(tasks).ConfigureAwait(false);
         }
@@ -760,8 +591,8 @@ namespace MainClient.UiTask
         {
             var tasks = new List<Task>(4);
 
-            if (_processQueueTask != null) tasks.Add(_processQueueTask);
-            if (_processProxyIpQueueTask != null) tasks.Add(_processProxyIpQueueTask);
+            if (_processTaskQueue != null) tasks.Add(_processTaskQueue);
+            if (_processIpQueue != null) tasks.Add(_processIpQueue);
             if (_flushLoopTask != null) tasks.Add(_flushLoopTask);
 
             if (tasks.Count == 0)
@@ -784,42 +615,43 @@ namespace MainClient.UiTask
 
         private async Task EnsureTaskBaselineAsync(int taskId, double taskCtr)
         {
-            if (_taskGlobalBaseline.ContainsKey(taskId))
+            var key = GetClickHourKey(taskId);
+
+            if (_taskGlobalBaseline.ContainsKey(key))
             {
-                _taskClickRates.TryAdd(taskId, taskCtr);
+                _taskClickRates[key] = taskCtr;
                 return;
             }
 
-            var gate = _baselineInitLocks.GetOrAdd(taskId, _ => new SemaphoreSlim(1, 1));
+            var gate = _baselineInitLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
             await gate.WaitAsync().ConfigureAwait(false);
 
             try
             {
-                if (_taskGlobalBaseline.ContainsKey(taskId))
+                if (_taskGlobalBaseline.ContainsKey(key))
                 {
-                    _taskClickRates.TryAdd(taskId, taskCtr);
+                    _taskClickRates[key] = taskCtr;
                     return;
                 }
 
                 var resp = await _adeHelper.GetTaskStatusAsync(taskId).ConfigureAwait(false);
 
-                var globalStats = new TaskStats();
+                var globalStats = new AdTrafficTaskStateEntity();
                 if (resp != null)
                 {
-                    globalStats.Start = resp.SelectToken("data.start")?.GetValue<long>() ?? 0;
-                    globalStats.DSP = resp.SelectToken("data.dsp")?.GetValue<long>() ?? 0;
-                    globalStats.Clickthrough = resp.SelectToken("data.click")?.GetValue<long>() ?? 0;
+                    globalStats.Start = resp.SelectToken("data.start")?.Value<long>() ?? 0;
+                    globalStats.DSP = resp.SelectToken("data.dsp")?.Value<long>() ?? 0;
+                    globalStats.Clickthrough = resp.SelectToken("data.click")?.Value<long>() ?? 0;
                 }
 
-                _taskGlobalBaseline[taskId] = globalStats;
-                _taskClickRates.TryAdd(taskId, taskCtr);
+                _taskGlobalBaseline[key] = globalStats;
+                _taskClickRates[key] = taskCtr;
             }
             finally
             {
                 gate.Release();
             }
         }
-
         #endregion
 
         #region 时间缓存（UTC + 北京时间）
@@ -854,7 +686,7 @@ namespace MainClient.UiTask
 
         #region 本地统计
 
-        private LocalHourStats _localStats = new LocalHourStats(GetHourKey());
+        private AdTrafficLocalHourTaskState _localStats = new AdTrafficLocalHourTaskState(GetHourKey());
 
         private static readonly IReadOnlyDictionary<string, long> EmptyDict =
             new Dictionary<string, long>();
@@ -872,18 +704,18 @@ namespace MainClient.UiTask
 
                 if (current.HourKey == hour)
                 {
-                    var taskDict = current.Tasks.GetOrAdd(taskId,
+                    var taskDict = current.BufferData.GetOrAdd(taskId,
                         _ => new ConcurrentDictionary<string, long>(Environment.ProcessorCount, 16));
 
                     taskDict.AddOrUpdate(name, value, (_, old) => old + value);
                     return;
                 }
 
-                var newStats = new LocalHourStats(hour);
+                var newStats = new AdTrafficLocalHourTaskState(hour);
 
                 if (Interlocked.CompareExchange(ref _localStats, newStats, current) == current)
                 {
-                    var taskDict = newStats.Tasks.GetOrAdd(taskId,
+                    var taskDict = newStats.BufferData.GetOrAdd(taskId,
                         _ => new ConcurrentDictionary<string, long>(Environment.ProcessorCount, 16));
 
                     taskDict.TryAdd(name, value);
@@ -903,7 +735,7 @@ namespace MainClient.UiTask
             if (stats.HourKey != hour)
                 return EmptyDict;
 
-            return stats.Tasks.TryGetValue(taskId, out var dict)
+            return stats.BufferData.TryGetValue(taskId, out var dict)
                 ? dict
                 : EmptyDict;
         }
@@ -919,7 +751,7 @@ namespace MainClient.UiTask
             if (stats.HourKey != hour)
                 return 0;
 
-            if (!stats.Tasks.TryGetValue(taskId, out var dict))
+            if (!stats.BufferData.TryGetValue(taskId, out var dict))
                 return 0;
 
             return dict.TryGetValue(name, out var value) ? value : 0;
@@ -941,7 +773,7 @@ namespace MainClient.UiTask
             if (stats.HourKey != hour)
                 return result;
 
-            if (!stats.Tasks.TryGetValue(taskId, out var dict))
+            if (!stats.BufferData.TryGetValue(taskId, out var dict))
                 return result;
 
             foreach (var name in names)
@@ -963,7 +795,7 @@ namespace MainClient.UiTask
             if (stats.HourKey != hour)
                 return 0;
 
-            if (!stats.Tasks.TryGetValue(taskId, out var dict))
+            if (!stats.BufferData.TryGetValue(taskId, out var dict))
                 return 0;
 
             var set = new HashSet<string>(names);

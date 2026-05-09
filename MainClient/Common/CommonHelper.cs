@@ -1,8 +1,12 @@
 ﻿using MainClient.Win32;
 using System.Diagnostics;
 using System.Management;
+using System.Net;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 
@@ -172,53 +176,6 @@ namespace MainClient.Common
 
 
 
-        private static string? _hostCache;
-        private static readonly SemaphoreSlim _host_lock = new(1, 1);
-        public static async Task<string> GetHostAsync()
-        {
-            // 快速路径（无锁）
-            if (!string.IsNullOrWhiteSpace(_hostCache))
-                return _hostCache;
-            await _host_lock.WaitAsync();
-            try
-            {
-                // 双重检查
-                if (!string.IsNullOrWhiteSpace(_hostCache))
-                    return _hostCache;
-                // ① 先尝试本机公网 IPv4
-                try
-                {
-                    var localIp = NetUtil
-                        .GetPublicIPv4Addresses()
-                        .FirstOrDefault();
-
-                    if (!string.IsNullOrWhiteSpace(localIp))
-                    {
-                        _hostCache = localIp;
-                        return _hostCache;
-                    }
-                }
-                catch { }
-                // ② 请求外部接口获取公网 IP
-                try
-                {
-                    var realIp = await RealIpHelper.GetRealIpAsync();
-                    if (!string.IsNullOrWhiteSpace(realIp))
-                    {
-                        _hostCache = realIp;
-                        return _hostCache;
-                    }
-                }
-                catch { }
-                // ③ 最终兜底
-                _hostCache = "";
-                return _hostCache;
-            }
-            finally
-            {
-                _host_lock.Release();
-            }
-        }
  
 
 
@@ -237,42 +194,6 @@ namespace MainClient.Common
             }
         }
 
-        public static long CreateIMEI(long imei)
-        {
-            var current = imei;
-            var checksum = 0;
-            for (int i = 0; i < 7; i++)
-            {
-                var d1 = (int)(current % 10) * 2;
-                current = current / 10;
-                var d0 = (int)(current % 10);
-                current = current / 10;
-                checksum += +d0 + d1 / 10 + d1 % 10;
-            }
-            checksum = 10 - (checksum % 10);
-            if (checksum == 10)
-                checksum = 0;
-            return imei * 10 + checksum;
-        }
-
-
-
-
-
-
-        public static string CreateDeviceUUID()
-        {
-            Guid result = Guid.NewGuid();
-            byte[] guidBytes = result.ToByteArray();
-            for (int i = 0; i < 8; i++)
-            {
-                byte t = guidBytes[15 - i];
-                guidBytes[15 - i] = guidBytes[i];
-                guidBytes[i] = t;
-            }
-
-            return new Guid(guidBytes).ToString();
-        }
 
         /// <summary>  
         /// 根据GUID获取16位的唯一字符串  
@@ -913,5 +834,217 @@ namespace MainClient.Common
 
 
         //EmptyStandbyList.exe standbylist
+
+
+
+
+        #region  Ip操作
+
+        private static readonly string[] _ipApiUrls =
+        {
+            "http://211.154.24.179:9000/api/dash/ipinfo.php",
+            "http://117.21.200.18:9000/api/dash/ipinfo.php",
+            "http://117.21.200.221/api/dash/ipinfo.php",
+            "http://ip-api.com/json/?lang=zh-CN",
+            "https://ipinfo.io/json",
+        };
+
+        private static readonly HttpClient _httpClient = new HttpClient(new HttpClientHandler
+        {
+            UseProxy = false
+        })
+        {
+            Timeout = TimeSpan.FromSeconds(5)
+        };
+
+        /// <summary>
+        /// 判断是否内网IP
+        /// </summary>
+        /// <param name="ip"></param>
+        /// <returns></returns>
+        private static bool IsPrivateIPv4(IPAddress ip)
+        {
+            byte[] b = ip.GetAddressBytes();
+
+            return
+                b[0] == 10 ||
+                (b[0] == 172 && b[1] >= 16 && b[1] <= 31) ||
+                (b[0] == 192 && b[1] == 168) ||
+                (b[0] == 169 && b[1] == 254) || // APIPA
+                b[0] == 127;
+        }
+
+        /// <summary>
+        /// 从单个接口获取 IP
+        /// </summary>
+        private static async Task<string> GetIpFromApiAsync(string url, CancellationToken cancellationToken)
+        {
+            using var response = await _httpClient.GetAsync(url, cancellationToken);
+            response.EnsureSuccessStatusCode();
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (string.IsNullOrWhiteSpace(json))
+                return string.Empty;
+
+            var options = new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            };
+
+            var data = JsonSerializer.Deserialize<IpInfoResponse>(json, options);
+
+            if (data == null)
+                return string.Empty;
+
+            if (!string.Equals(data.Status, "success", StringComparison.OrdinalIgnoreCase))
+                return string.Empty;
+
+            return data.Query?.Trim() ?? string.Empty;
+        }
+
+        /// <summary>
+        /// 并发请求多个 IP 接口，哪个先成功返回就用哪个
+        /// </summary>
+        private static async Task<string> GetRealIpAsync(CancellationToken cancellationToken = default)
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            cts.CancelAfter(TimeSpan.FromSeconds(6));
+
+            var tasks = _ipApiUrls
+                .Select(url => GetIpFromApiAsync(url, cts.Token))
+                .ToList();
+
+            while (tasks.Count > 0)
+            {
+                var finishedTask = await Task.WhenAny(tasks);
+                tasks.Remove(finishedTask);
+
+                try
+                {
+                    var ip = await finishedTask;
+                    if (!string.IsNullOrWhiteSpace(ip))
+                    {
+                        // 有一个成功了，取消其他请求
+                        cts.Cancel();
+                        return ip;
+                    }
+                }
+                catch
+                {
+                    // 当前这个接口失败，继续等其他接口
+                }
+            }
+
+            return string.Empty;
+        }
+
+        /// <summary>
+        /// 获取本机网卡的IP地址
+        /// </summary>
+        /// <returns></returns>
+        private static List<string> GetPublicIPv4Addresses()
+        {
+            var result = new List<string>();
+
+            foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
+            {
+                // 必须启用
+                if (ni.OperationalStatus != OperationalStatus.Up)
+                    continue;
+
+                // 排除虚拟/隧道/回环
+                if (ni.NetworkInterfaceType == NetworkInterfaceType.Loopback ||
+                    ni.NetworkInterfaceType == NetworkInterfaceType.Tunnel)
+                    continue;
+
+                // 必须有网关（否则一般是虚拟或离线网卡）
+                var props = ni.GetIPProperties();
+                if (!props.GatewayAddresses.Any(g =>
+                    g.Address.AddressFamily == AddressFamily.InterNetwork &&
+                    !IPAddress.IsLoopback(g.Address)))
+                    continue;
+
+                foreach (var ua in props.UnicastAddresses)
+                {
+                    var ip = ua.Address;
+
+                    if (ip.AddressFamily != AddressFamily.InterNetwork)
+                        continue;
+
+                    if (IsPrivateIPv4(ip))
+                        continue;
+
+                    result.Add(ip.ToString());
+                }
+            }
+
+            return result;
+        }
+        private sealed class IpInfoResponse
+        {
+            public string? Status { get; set; }
+            public string? Country { get; set; }
+            public string? CountryCode { get; set; }
+            public string? Province { get; set; }
+            public string? City { get; set; }
+            public string? District { get; set; }
+            public string? Isp { get; set; }
+            public string? Areacode { get; set; }
+            public string? Lat { get; set; }
+            public string? Lon { get; set; }
+            public string? Query { get; set; }
+        }
+
+        private static string? _hostCache;
+        private static readonly SemaphoreSlim _host_lock = new(1, 1);
+        public static async Task<string> GetLocalHostAsync()
+        {
+            // 快速路径（无锁）
+            if (!string.IsNullOrWhiteSpace(_hostCache))
+                return _hostCache;
+            await _host_lock.WaitAsync();
+            try
+            {
+                // 双重检查
+                if (!string.IsNullOrWhiteSpace(_hostCache))
+                    return _hostCache;
+                // ① 先尝试本机公网 IPv4
+                try
+                {
+                    var localIp = GetPublicIPv4Addresses().FirstOrDefault();
+
+                    if (!string.IsNullOrWhiteSpace(localIp))
+                    {
+                        _hostCache = localIp;
+                        return _hostCache;
+                    }
+                }
+                catch { }
+                // ② 请求外部接口获取公网 IP
+                try
+                {
+                    var realIp = await GetRealIpAsync();
+                    if (!string.IsNullOrWhiteSpace(realIp))
+                    {
+                        _hostCache = realIp;
+                        return _hostCache;
+                    }
+                }
+                catch { }
+                // ③ 最终兜底
+                _hostCache = "";
+                return _hostCache;
+            }
+            finally
+            {
+                _host_lock.Release();
+            }
+        }
+
+
+
+        #endregion
+
+
     }
 }
