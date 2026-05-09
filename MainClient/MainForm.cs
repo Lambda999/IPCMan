@@ -596,6 +596,19 @@ namespace MainClient
                 var innerToken = linkedCts.Token;
                 var uvIntervalMs = Math.Max(1000, _appSettings.UVInterval <= 0 ? 1000 : _appSettings.UVInterval);
 
+                async Task<bool> WaitForDispatchedUvCompletionAsync()
+                {
+                    if (Volatile.Read(ref dispatchedUvCount) <= 0)
+                        return false;
+
+                    TryCompleteAll();
+
+                    using var completionRegistration = innerToken.Register(() => completedUvTcs.TrySetCanceled(innerToken));
+                    await completedUvTcs.Task;
+
+                    return stopRemainingUvByResult;
+                }
+
                 if (_appSettings.IsOsrMode)
                 {
                     for (int uvIndex = 0; uvIndex < ctx.TotalUV; uvIndex++)
@@ -666,15 +679,7 @@ namespace MainClient
                         }
                     }
 
-                    if (Volatile.Read(ref dispatchedUvCount) <= 0)
-                        return false;
-
-                    TryCompleteAll();
-
-                    using var completeReg = innerToken.Register(() => completedUvTcs.TrySetCanceled(innerToken));
-                    await completedUvTcs.Task;
-
-                    return stopRemainingUvByResult;
+                    return await WaitForDispatchedUvCompletionAsync();
                 }
 
                 for (int uvIndex = 0; uvIndex < ctx.TotalUV; uvIndex++)
@@ -755,15 +760,7 @@ namespace MainClient
                     }
                 }
 
-                if (Volatile.Read(ref dispatchedUvCount) <= 0)
-                    return false;
-
-                TryCompleteAll();
-
-                using var completeReg = innerToken.Register(() => completedUvTcs.TrySetCanceled(innerToken));
-                await completedUvTcs.Task;
-
-                return stopRemainingUvByResult;
+                return await WaitForDispatchedUvCompletionAsync();
             }
             finally
             {
