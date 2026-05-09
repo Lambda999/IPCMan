@@ -1,4 +1,4 @@
-﻿using MainClient.Common;
+using MainClient.Common;
 using MainClient.Infrastructure;
 using MainClient.Ipc;
 using MainClient.Logging;
@@ -615,6 +615,9 @@ namespace MainClient
 
             session.OnBrowserResult += async response =>
             {
+                if (_appSettings.IsOsrMode)
+                    return;
+
                 if (!string.Equals(response.TaskId, ctx.UniqueId, StringComparison.OrdinalIgnoreCase))
                     return;
 
@@ -685,6 +688,68 @@ namespace MainClient
                 var innerToken = linkedCts.Token;
                 var uvIntervalMs = Math.Max(1000, _appSettings.UVInterval <= 0 ? 1000 : _appSettings.UVInterval);
 
+                if (_appSettings.IsOsrMode)
+                {
+                    for (int uvIndex = 0; uvIndex < ctx.TotalUV; uvIndex++)
+                    {
+                        if (token.IsCancellationRequested)
+                            return false;
+
+                        string browserId = $"uv_{uvIndex + 1}";
+
+                        try
+                        {
+                            var dev = await GetDeviceForTaskAsync(ctx.OS, ctx.TaskId, uvIndex, innerToken);
+                            if (dev == null)
+                            {
+                                _logger.LogWarning("GetDeviceForTaskAsync failed. taskId={TaskId}, uv={Uv}",
+                                    ctx.TaskId, uvIndex + 1);
+                                continue;
+                            }
+
+                            NormalizeDevice(dev, ctx.OS);
+
+                            var uvPayload = BuildRunBrowserPayload(ctx, rawTask, dev, consumerId, uvIndex);
+                            var response = await session.RunBrowserAsync(
+                                ctx.UniqueId,
+                                browserId,
+                                uvPayload,
+                                innerToken);
+
+                            _logger.LogInformation(
+                                "OSR RunBrowserAsync done. taskId={TaskId}, uv={Uv}, browserId={BrowserId}, success={Success}, msg={Message}",
+                                ctx.TaskId,
+                                uvIndex + 1,
+                                browserId,
+                                response.Success,
+                                response.Message);
+
+                            if (ShouldStopRemainingUv(ctx, response))
+                                return true;
+
+                            if (uvIndex < ctx.TotalUV - 1)
+                                await Task.Delay(uvIntervalMs, innerToken);
+                        }
+                        catch (OperationCanceledException) when (token.IsCancellationRequested)
+                        {
+                            return false;
+                        }
+                        catch (OperationCanceledException) when (ipTtlCts.IsCancellationRequested)
+                        {
+                            LogWriteLine($"任务 {ctx.TaskTitle}[{ctx.TaskId}] 的 IP 总有效时长已到，停止后续 UV。");
+                            return true;
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex,
+                                "ExecuteTaskByCefClientAsync OSR uv failed. taskId={TaskId}, uv={Uv}, consumer={ConsumerId}",
+                                ctx.TaskId, uvIndex + 1, consumerId);
+                        }
+                    }
+
+                    return false;
+                }
+
                 for (int uvIndex = 0; uvIndex < ctx.TotalUV; uvIndex++)
                 {
                     if (token.IsCancellationRequested)
@@ -704,8 +769,6 @@ namespace MainClient
 
                         NormalizeDevice(dev, ctx.OS);
 
-                        var uvPayload = BuildRunBrowserPayload(ctx, rawTask, dev, consumerId, uvIndex);
-
                         if (!inFlightBrowsers.TryAdd(browserId, 0))
                         {
                             _logger.LogWarning(
@@ -720,6 +783,9 @@ namespace MainClient
 
                         try
                         {
+                            await session.CreateBrowserAsync(ctx.UniqueId, browserId, innerToken);
+
+                            var uvPayload = BuildRunBrowserPayload(ctx, rawTask, dev, consumerId, uvIndex);
                             await session.RunBrowserNoWaitAsync(
                                 ctx.UniqueId,
                                 browserId,
@@ -730,6 +796,13 @@ namespace MainClient
                         {
                             inFlightBrowsers.TryRemove(browserId, out _);
                             Interlocked.Decrement(ref dispatchedUvCount);
+                            try
+                            {
+                                await session.RemoveBrowserAsync(ctx.UniqueId, browserId, CancellationToken.None);
+                            }
+                            catch
+                            {
+                            }
                             throw;
                         }
 
@@ -806,6 +879,9 @@ namespace MainClient
                 ["consumerId"] = consumerId,
                 ["os"] = (int)(ctx.OS),
                 ["device"] = JsonNode.Parse(System.Text.Json.JsonSerializer.Serialize(dev)),
+                ["userAgent"] = dev is JToken devToken ? devToken["ua"]?.Value<string>() ?? string.Empty : string.Empty,
+                ["isProxyMode"] = _appSettings.IsProxyMode,
+                ["proxy_server"] = ctx.ProxyServer ?? string.Empty,
                 ["rawTask"] = rawTask.ToString(Newtonsoft.Json.Formatting.None),
                 ["url"] = ctx.Url,
                 // OSR 端用这些短超时防止慢页面长期占住本次 UV，影响后续任务调度。
