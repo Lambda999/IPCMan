@@ -6,14 +6,11 @@ namespace CefClient
     internal static class CefCachePaths
     {
         public static string RootCachePath { get; set; } = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "User Data");
-        public static string DefaultCachePath => Path.Combine(RootCachePath, "Default");
 
         public static string GetUvCachePath(string? taskId, string? consumerId, string? uvIndex, string browserId)
         {
             return Path.Combine(
                 RootCachePath,
-                "TaskSlots",
-                SafeSegment(taskId),
                 SafeSegment(consumerId),
                 SafeSegment(string.IsNullOrWhiteSpace(uvIndex) ? browserId : uvIndex));
         }

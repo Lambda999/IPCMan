@@ -128,9 +128,9 @@ namespace CefClient
             var item = new Panel
             {
                 Name = GetScreenshotItemName(browserId),
-                Width = 240,
-                Height = 560,
-                Margin = new Padding(8),
+                Width = 420,
+                Height = 920,
+                Margin = new Padding(4),
                 BorderStyle = BorderStyle.FixedSingle
             };
 

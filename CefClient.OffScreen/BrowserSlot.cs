@@ -83,10 +83,11 @@
                 };
             }
 
+            url = "chrome://version/";
             var taskId = payload?["taskId"]?.ToString() ?? BrowserId;
             var consumerId = payload?["consumerId"]?.ToString() ?? "unknown";
             var uvIndex = payload?["uvIndex"]?.ToString() ?? BrowserId;
-            var cachePath = CefCachePaths.GetUvCachePath(taskId, consumerId, uvIndex, BrowserId);
+            var cachePath = System.IO.Path.GetFullPath(CefCachePaths.GetUvCachePath(taskId, consumerId, uvIndex, BrowserId));
             Directory.CreateDirectory(cachePath);
 
             var os = GetNullableInt(payload, "os") ?? 0;
@@ -103,16 +104,20 @@
             {
                 PersistSessionCookies = true,
                 CachePath = cachePath,
-                PersistUserPreferences = true
+
             };
 
             try
             {
                 using var requestContext = new RequestContext(requestContextSettings);
+
+                //requestContext.set
+                //browser.RequestContext = RequestContext.Configure().WithCachePath('PathHere').Create();
+
                 using var browser = new ChromiumWebBrowser("about:blank", browserSettings, requestContext)
                 {
                     Size = new Size(sw, sh),
-                    RequestHandler = new ExternalProtocolRequestHandler(message => _log($"{BrowserId}: {message}"))
+                    //RequestHandler = new ExternalProtocolRequestHandler(message => _log($"{BrowserId}: {message}"))
                 };
                 await browser.WaitForInitialLoadAsync()
                     .WaitAsync(TimeSpan.FromMilliseconds(DefaultInitialLoadTimeoutMs), cancellationToken);
@@ -184,7 +189,7 @@
                 {
                     BrowserId = BrowserId,
                     Success = true,
-                    Message = loadCompleted ? $"执行成功:{cachePath}" : "页面加载较慢，已按超时继续",
+                    Message = loadCompleted ? $"执行成功:{device}" : "页面加载较慢，已按超时继续",
                     Data = new JsonObject
                     {
                         ["title"] = title ?? "",
@@ -277,6 +282,7 @@
 
                 using var stream = new MemoryStream(screenshotBytes);
                 using var image = Image.FromStream(stream);
+                image.Save($"test_{Guid.NewGuid()}.png");
                 _screenshotReady(BrowserId, new Bitmap(image));
                 return true;
             }

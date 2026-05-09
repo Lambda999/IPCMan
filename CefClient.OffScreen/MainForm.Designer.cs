@@ -30,23 +30,22 @@
         {
             screenshotPanel = new FlowLayoutPanel();
             SuspendLayout();
-            //
+            // 
             // screenshotPanel
-            //
+            // 
             screenshotPanel.AutoScroll = true;
             screenshotPanel.Dock = DockStyle.Fill;
             screenshotPanel.Location = new Point(0, 0);
             screenshotPanel.Name = "screenshotPanel";
             screenshotPanel.Padding = new Padding(8);
-            screenshotPanel.Size = new Size(1125, 888);
+            screenshotPanel.Size = new Size(1182, 1053);
             screenshotPanel.TabIndex = 0;
-            screenshotPanel.WrapContents = true;
-            //
+            // 
             // MainForm
-            //
+            // 
             AutoScaleDimensions = new SizeF(9F, 20F);
             AutoScaleMode = AutoScaleMode.Font;
-            ClientSize = new Size(1125, 888);
+            ClientSize = new Size(1182, 1053);
             Controls.Add(screenshotPanel);
             Name = "MainForm";
             Text = "CefClient.OffScreen 截图预览";

@@ -32,7 +32,7 @@
 
 
 	<ItemGroup>
-		<PackageReference Include="CefSharp.OffScreen.NETCore" Version="129.0.110" />
+		<PackageReference Include="CefSharp.OffScreen.NETCore" Version="120.2.70" />
 		<PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
 	</ItemGroup>
 

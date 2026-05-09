@@ -1,7 +1,5 @@
 ﻿using CefSharp;
 using CefSharp.OffScreen;
-using System;
-using System.Windows.Forms;
 
 namespace CefClient
 {
@@ -14,17 +12,10 @@ namespace CefClient
             .FirstOrDefault(x => x.StartsWith("--pipe-name=", StringComparison.OrdinalIgnoreCase))
             ?.Substring("--pipe-name=".Length);
 
-            var rootCachePath = args
-                .FirstOrDefault(x => x.StartsWith("--root-cache-path=", StringComparison.OrdinalIgnoreCase))
-                ?.Substring("--root-cache-path=".Length);
-            if (string.IsNullOrWhiteSpace(rootCachePath))
-                rootCachePath = CefCachePaths.RootCachePath;
-
-            CefCachePaths.RootCachePath = Path.GetFullPath(rootCachePath);
 
             var defaultSubprocessPath = Path.Combine(AppContext.BaseDirectory, "CefSharp.BrowserSubprocess.exe");
 
-            rootCachePath = CefCachePaths.RootCachePath;
+            var rootCachePath = CefCachePaths.RootCachePath;
             ApplicationConfiguration.Initialize();
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
 
@@ -51,26 +42,36 @@ namespace CefClient
             };
 
             Directory.CreateDirectory(rootCachePath);
-            Directory.CreateDirectory(CefCachePaths.DefaultCachePath);
+            //CefSharpSettings.RuntimeStyle = CefRuntimeStyle.Chrome;
+            CefSharpSettings.SubprocessExitIfParentProcessClosed = true;
+            Cef.EnableWaitForBrowsersToClose();
 
             var settings = new CefSharp.OffScreen.CefSettings
             {
-                 BrowserSubprocessPath = defaultSubprocessPath,
-                 RootCachePath = CefCachePaths.RootCachePath,
-                 CachePath = CefCachePaths.DefaultCachePath,
-                 PersistSessionCookies = false,
-                 PersistUserPreferences = true,
+
+                BrowserSubprocessPath = defaultSubprocessPath,
+                //RootCachePath = System.IO.Path.GetFullPath(CefCachePaths.RootCachePath),
+                //CachePath = CefCachePaths.RootCachePath,
+                PersistSessionCookies = false,
+                PersistUserPreferences= false,
+                WindowlessRenderingEnabled = true,
+
             };
 
+            ///--disable-chrome-runtime
+            /////incognito
+            //settings.CefCommandLineArgs.Add("disable-chrome-runtime");
+            //settings.CefCommandLineArgs.Add("incognito");
             settings.CefCommandLineArgs.Add("enable-media-stream");
             settings.CefCommandLineArgs.Add("use-fake-ui-for-media-stream");
             settings.CefCommandLineArgs.Add("enable-usermedia-screen-capturing");
+            settings.SetOffScreenRenderingBestPerformanceArgs();
 
             Cef.Initialize(settings, performDependencyCheck: true, browserProcessHandler: null);
 
             Application.ApplicationExit += (sender, e) =>
             {
-                if (Cef.IsInitialized ?? false)
+                if (Cef.IsInitialized)
                 {
                     Cef.Shutdown();
                 }
