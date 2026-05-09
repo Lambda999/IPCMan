@@ -1,5 +1,6 @@
-﻿using CefSharp;
-using CefSharp.OffScreen;
+﻿using CefClient.Common;
+using CefSharp;
+
 
 namespace CefClient
 {
@@ -13,9 +14,10 @@ namespace CefClient
             ?.Substring("--pipe-name=".Length);
 
 
-            var defaultSubprocessPath = Path.Combine(AppContext.BaseDirectory, "CefSharp.BrowserSubprocess.exe");
+            var defaultSubprocessPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "CefSharp.BrowserSubprocess.exe");
+ 
 
-            var rootCachePath = CefCachePaths.RootCachePath;
+
             ApplicationConfiguration.Initialize();
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
 
@@ -41,31 +43,65 @@ namespace CefClient
                 e.SetObserved();
             };
 
-            Directory.CreateDirectory(rootCachePath);
+            // Directory.CreateDirectory(rootCachePath);
             //CefSharpSettings.RuntimeStyle = CefRuntimeStyle.Chrome;
-            CefSharpSettings.SubprocessExitIfParentProcessClosed = true;
+            //CefSharpSettings.SubprocessExitIfParentProcessClosed = true;
+            //Cef.EnableWaitForBrowsersToClose();
             Cef.EnableWaitForBrowsersToClose();
-
             var settings = new CefSharp.OffScreen.CefSettings
             {
 
                 BrowserSubprocessPath = defaultSubprocessPath,
+                RootCachePath = CefCachePaths.RootCachePath,
+                //CachePath = null,
                 //RootCachePath = System.IO.Path.GetFullPath(CefCachePaths.RootCachePath),
                 //CachePath = CefCachePaths.RootCachePath,
                 PersistSessionCookies = false,
                 PersistUserPreferences= false,
                 WindowlessRenderingEnabled = true,
+                IgnoreCertificateErrors=true,
+              
+                UserAgent= "Mozilla/5.0 (Linux; Android 13; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Mobile Safari/537.36",
+                
 
             };
 
             ///--disable-chrome-runtime
             /////incognito
             //settings.CefCommandLineArgs.Add("disable-chrome-runtime");
+
             //settings.CefCommandLineArgs.Add("incognito");
             settings.CefCommandLineArgs.Add("enable-media-stream");
             settings.CefCommandLineArgs.Add("use-fake-ui-for-media-stream");
             settings.CefCommandLineArgs.Add("enable-usermedia-screen-capturing");
+            settings.CefCommandLineArgs.Add("disable-extensions", "1");
+            settings.CefCommandLineArgs.Add("disable-plugins", "1");
+            settings.CefCommandLineArgs.Add("disable-pdf-extension", "1");
+            settings.CefCommandLineArgs.Add("disable-print-preview", "1");
+            settings.CefCommandLineArgs.Add("disable-notifications", "1");
+            settings.CefCommandLineArgs.Add("disable-speech-api", "1");
+            settings.CefCommandLineArgs.Add("disable-background-networking", "1");
+            settings.CefCommandLineArgs.Add("disable-sync", "1");
+            settings.CefCommandLineArgs.Add("metrics-recording-only", "1");
+            settings.CefCommandLineArgs.Add("disable-default-apps", "1");
+            settings.CefCommandLineArgs.Add("no-first-run", "1");
+            settings.CefCommandLineArgs.Add("no-default-browser-check", "1");
+
+            //settings.CefCommandLineArgs.Add("disable-gpu", "1");
+            //settings.CefCommandLineArgs.Add("disable-gpu-compositing", "1");
+            //settings.CefCommandLineArgs.Add("disable-gpu-shader-disk-cache", "1");
+            //settings.CefCommandLineArgs.Add("disable-webgl", "1");
+            //settings.CefCommandLineArgs.Add("disable-webgpu", "1");
+            //settings.CefCommandLineArgs.Add("disable-component-update", "1");
+            //settings.CefCommandLineArgs.Add("disable-gpu-vsync");
+            //settings.CefCommandLineArgs.Add("disable-features", "Widevine");
+
+            settings.CefCommandLineArgs.Add("disk-cache-size", (100 * 1024 * 1024).ToString());   // 100MB
+            settings.CefCommandLineArgs.Add("media-cache-size", (50 * 1024 * 1024).ToString());   // 50MB
+            
+            //settings.DisableGpuAcceleration();
             settings.SetOffScreenRenderingBestPerformanceArgs();
+ 
 
             Cef.Initialize(settings, performDependencyCheck: true, browserProcessHandler: null);
 
@@ -73,6 +109,7 @@ namespace CefClient
             {
                 if (Cef.IsInitialized)
                 {
+                    Cef.WaitForBrowsersToClose();
                     Cef.Shutdown();
                 }
             };

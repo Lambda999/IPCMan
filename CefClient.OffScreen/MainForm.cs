@@ -23,7 +23,12 @@ namespace CefClient
 
         private void MainForm_Load(object sender, EventArgs e)
         {
-           // BeginInvoke(new Action(Hide));
+            screenshotPanel.Dock = DockStyle.Fill;
+            screenshotPanel.AutoScroll = true;
+            screenshotPanel.WrapContents = true;
+            screenshotPanel.FlowDirection = FlowDirection.LeftToRight;
+
+            // BeginInvoke(new Action(Hide));
         }
 
         public Task<bool> CreateBrowserAsync(string browserId, CancellationToken cancellationToken = default)
@@ -146,6 +151,8 @@ namespace CefClient
             var pictureBox = new PictureBox
             {
                 Dock = DockStyle.Fill,
+                //Width = 420,
+                //Height= 920,
                 SizeMode = PictureBoxSizeMode.Zoom,
                 BackColor = Color.WhiteSmoke
             };

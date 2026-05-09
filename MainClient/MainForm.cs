@@ -355,7 +355,7 @@ namespace MainClient
                 writer.TryComplete(completionError);
             }
         }
-
+ 
         /// <summary>
         /// 消费任务
         /// </summary>
@@ -363,97 +363,6 @@ namespace MainClient
         /// <param name="task"></param>
         /// <param name="token"></param>
         /// <returns></returns>
-        private async Task ConsumerAsyncv2(int consumerId, JsonNode task, CancellationToken token)
-        {
-            try
-            {
-                token.ThrowIfCancellationRequested();
-
-                var parseResult = ParseTask(task);
-                if (!parseResult.Success)
-                {
-                    _logger.LogWarning("ConsumerAsync skip malformed task: {Task}", task?.ToString());
-                    return;
-                }
-
-                var ctx = parseResult.Context!;
-                ApplyUvPvOverrides(ctx);
-                ///检测设备接口是否可用
-                var check_dev = await GetDeviceForTaskAsync(ctx.OS, ctx.TaskId, 0, token);
-                if (check_dev == null)
-                {
-                    _logger.LogWarning("ConsumerAsync get device failed after retries. taskId={TaskId}, uv={Uv}", ctx.TaskId, 1);
-                    return;
-                }
-
-                await PrepareProxyContextAsync(ctx, task, token);
-
-                var ipTtlSeconds = _appSettings.IpTtl;
-                if (ipTtlSeconds <= 0)
-                {
-                    _logger.LogWarning("ConsumerAsync invalid IpTtl={IpTtl}, taskId={TaskId}", ipTtlSeconds, ctx.TaskId);
-                    return;
-                }
-
-                using var ipTtlCts = new CancellationTokenSource(TimeSpan.FromSeconds(ipTtlSeconds));
-                using var consumerLinkedCts = CancellationTokenSource.CreateLinkedTokenSource(token, ipTtlCts.Token);
-                var consumerToken = consumerLinkedCts.Token;
-
-                for (int uvIndex = 0; uvIndex < ctx.TotalUV; uvIndex++)
-                {
-                    if (token.IsCancellationRequested)
-                        return;
-
-                    try
-                    {
-                        _aggregator.Enqueue(new TaskEvent(ctx.TaskId, StateType.Request, 1));
-
-                        var dev = await GetDeviceForTaskAsync(ctx.OS, ctx.TaskId, uvIndex, consumerToken);
-                        if (dev == null)
-                            continue;
-
-                        NormalizeDevice(dev, ctx.OS);
-
-                        var pluginArgs = BuildPluginArgs(ctx, task, dev, consumerId, uvIndex);
-
-                        bool stopRemainingUv = await ExecutePluginOnceAsync(
-                            ctx,
-                            pluginArgs,
-                            consumerId,
-                            uvIndex,
-                            consumerToken);
-
-                        if (stopRemainingUv)
-                            break;
-                    }
-                    catch (OperationCanceledException) when (token.IsCancellationRequested)
-                    {
-                        return;
-                    }
-                    catch (OperationCanceledException) when (ipTtlCts.IsCancellationRequested)
-                    {
-                        LogWriteLine($"任务 {ctx.TaskTitle}[{ctx.TaskId}] 的 IP 总有效时长已到，停止后续 UV。");
-                        break;
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex,
-                            "ConsumerAsync uv failed. taskId={TaskId}, uv={Uv}, consumer={ConsumerId}",
-                            ctx.TaskId, uvIndex + 1, consumerId);
-                    }
-                }
-            }
-            catch (OperationCanceledException) when (token.IsCancellationRequested)
-            {
-                return;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, $"ConsumerAsync failed:{ex.Message}");
-            }
-        }
-
-
         private async Task ConsumerAsync(int consumerId, JsonNode task, CancellationToken token)
         {
             try
@@ -528,21 +437,16 @@ namespace MainClient
                 cefProcessDirectory,
                 cefProcessFileName);
 
-            var cefRootCachePath = Path.Combine(
-                Path.GetDirectoryName(cefExePath)!,
-                "User Data");
-            Directory.CreateDirectory(cefRootCachePath);
 
             _logger.LogInformation(
-                "Use {CefProcessFileName} for taskId={TaskId}, uniqueId={UniqueId}, consumer={ConsumerId}, osrMode={IsOsrMode}, rootCachePath={RootCachePath}",
+                "Use {CefProcessFileName} for taskId={TaskId}, uniqueId={UniqueId}, consumer={ConsumerId}, osrMode={IsOsrMode}",
                 cefProcessFileName,
                 ctx.TaskId,
                 ctx.UniqueId,
                 consumerId,
-                _appSettings.IsOsrMode,
-                cefRootCachePath);
+                _appSettings.IsOsrMode);
 
-            await using var session = new CefClientSession(cefExePath, TimeSpan.FromSeconds(15), cefRootCachePath);
+            await using var session = new CefClientSession(cefExePath, TimeSpan.FromSeconds(15));
 
             session.OnLog += message =>
             {

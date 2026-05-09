@@ -1,7 +1,9 @@
 ﻿namespace CefClient
 {
+    using CefClient.Common;
     using CefClient.Handler;
     using CefSharp;
+    using CefSharp.DevTools.Profiler;
     using CefSharp.OffScreen;
     using System;
     using System.Diagnostics;
@@ -87,17 +89,29 @@
             var taskId = payload?["taskId"]?.ToString() ?? BrowserId;
             var consumerId = payload?["consumerId"]?.ToString() ?? "unknown";
             var uvIndex = payload?["uvIndex"]?.ToString() ?? BrowserId;
-            var cachePath = System.IO.Path.GetFullPath(CefCachePaths.GetUvCachePath(taskId, consumerId, uvIndex, BrowserId));
+            //var cachePath = System.IO.Path.GetFullPath(CefCachePaths.GetUvCachePath(taskId, consumerId, uvIndex, BrowserId));
+            var cachePath = Path.Combine(CefCachePaths.RootCachePath, consumerId,uvIndex);
+
             Directory.CreateDirectory(cachePath);
 
             var os = GetNullableInt(payload, "os") ?? 0;
             var device = payload?["device"];
-            var sw = GetNullableInt(device, "sw") ?? 412;
-            var sh = GetNullableInt(device, "sh") ?? 915;
+            var sw = GetNullableInt(device, "sw") ?? 1080;
+            var sh = GetNullableInt(device, "sh") ?? 1920;
 
+            var ua = device?["ua"]?.ToString();
+            var platform = os == 1 ? "Android" : "iPhone";
+
+
+
+            var devProfile = AndroidViewportMatcher.Match(sw, sh);
             var browserSettings = new BrowserSettings
             {
-                WindowlessFrameRate = 15,
+                WindowlessFrameRate = 5,
+                Javascript = CefState.Enabled,
+                ImageLoading = CefState.Enabled,
+                WebGl = CefState.Disabled,
+               
             };
 
             var requestContextSettings = new RequestContextSettings
@@ -129,9 +143,21 @@
                     await devToolsClient.Storage.ClearDataForOriginAsync("*", "cache_storage,cookies,local_storage");
                 }
 
+                await devToolsClient.Emulation.SetUserAgentOverrideAsync(userAgent: ua, platform: platform);
+
+                await devToolsClient.Emulation.SetDeviceMetricsOverrideAsync(
+                    width: devProfile.CssWidth,
+                    height: devProfile.CssHeight,
+                    deviceScaleFactor: devProfile.DeviceScaleFactor,
+                    mobile: true,
+                    scale: 1.0,
+                    screenWidth: devProfile.CssWidth,
+                    screenHeight: devProfile.CssHeight
+                    );
                 await devToolsClient.Emulation.SetTouchEmulationEnabledAsync(true, Random.Shared.Next(4, 6));
-                await devToolsClient.Emulation.SetDeviceMetricsOverrideAsync(width: sw, height: sh, deviceScaleFactor: 1, mobile: true);
-                await devToolsClient.Emulation.SetUserAgentOverrideAsync(userAgent: payload?["userAgent"]?.ToString() ?? string.Empty, platform: os == 1 ? "Android" : "iPhone");
+                await devToolsClient.Emulation.SetScrollbarsHiddenAsync(true);
+
+
 
                 var loadTimeoutMs = GetPositiveInt(payload, "loadTimeoutMs", DefaultLoadTimeoutMs);
                 var firstScreenshotDelayMs = GetPositiveInt(payload, "firstScreenshotDelayMs", DefaultFirstScreenshotDelayMs);
@@ -146,7 +172,7 @@
 
                 // OSR 模式每次 runBrowser 都是一次性浏览：创建、浏览、截图、返回后由 using 自动释放。
                 await Task.Delay(TimeSpan.FromMilliseconds(firstScreenshotDelayMs), cancellationToken);
- 
+
                 WaitForNavigationAsyncResponse? loadResponse = null;
                 var loadTimedOut = false;
                 try
@@ -182,6 +208,7 @@
 
                 var title = await GetPageTitleAsync(browser, titleTimeoutMs, cancellationToken);
                 await Task.Delay(TimeSpan.FromMilliseconds(finalScreenshotDelayMs), cancellationToken);
+ 
                 var screenshotShown = await TryCaptureAndShowScreenshotAsync(browser, screenshotTimeoutMs, cancellationToken);
                 var loadCompleted = loadResponse != null && !loadTimedOut && loadResponse.ErrorCode == CefErrorCode.None;
 
@@ -189,7 +216,7 @@
                 {
                     BrowserId = BrowserId,
                     Success = true,
-                    Message = loadCompleted ? $"执行成功:{device}" : "页面加载较慢，已按超时继续",
+                    Message = loadCompleted ? $"执行成功:{ua}" : "页面加载较慢，已按超时继续",
                     Data = new JsonObject
                     {
                         ["title"] = title ?? "",
@@ -273,6 +300,8 @@
 
             try
             {
+                var host = browser.GetBrowserHost();
+                host.Invalidate(PaintElementType.View);
                 var screenshotBytes = await browser.CaptureScreenshotAsync()
                     .WaitAsync(TimeSpan.FromMilliseconds(timeoutMs), cancellationToken);
                 cancellationToken.ThrowIfCancellationRequested();
