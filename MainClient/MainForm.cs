@@ -526,9 +526,6 @@ namespace MainClient
 
             session.OnBrowserResult += async response =>
             {
-                if (_appSettings.IsOsrMode)
-                    return;
-
                 if (!string.Equals(response.TaskId, ctx.UniqueId, StringComparison.OrdinalIgnoreCase))
                     return;
 
@@ -599,6 +596,19 @@ namespace MainClient
                 var innerToken = linkedCts.Token;
                 var uvIntervalMs = Math.Max(1000, _appSettings.UVInterval <= 0 ? 1000 : _appSettings.UVInterval);
 
+                async Task<bool> WaitForDispatchedUvCompletionAsync()
+                {
+                    if (Volatile.Read(ref dispatchedUvCount) <= 0)
+                        return false;
+
+                    TryCompleteAll();
+
+                    using var completionRegistration = innerToken.Register(() => completedUvTcs.TrySetCanceled(innerToken));
+                    await completedUvTcs.Task;
+
+                    return stopRemainingUvByResult;
+                }
+
                 if (_appSettings.IsOsrMode)
                 {
                     for (int uvIndex = 0; uvIndex < ctx.TotalUV; uvIndex++)
@@ -620,23 +630,34 @@ namespace MainClient
 
                             NormalizeDevice(dev, ctx.OS);
 
-                            var uvPayload = BuildRunBrowserPayload(ctx, rawTask, dev, consumerId, uvIndex);
-                            var response = await session.RunBrowserAsync(
-                                ctx.UniqueId,
-                                browserId,
-                                uvPayload,
-                                innerToken);
+                            if (!inFlightBrowsers.TryAdd(browserId, 0))
+                            {
+                                _logger.LogWarning(
+                                    "Duplicated in-flight OSR browserId. taskId={TaskId}, browserId={BrowserId}",
+                                    ctx.TaskId,
+                                    browserId);
+                                continue;
+                            }
 
-                            _logger.LogInformation(
-                                "OSR RunBrowserAsync done. taskId={TaskId}, uv={Uv}, browserId={BrowserId}, success={Success}, msg={Message}",
-                                ctx.TaskId,
-                                uvIndex + 1,
-                                browserId,
-                                response.Success,
-                                response.Message);
+                            Interlocked.Increment(ref dispatchedUvCount);
+                            _ = StartUvTimeoutWatchdogAsync(browserId, innerToken);
 
-                            if (ShouldStopRemainingUv(ctx, response))
-                                return true;
+                            try
+                            {
+                                // OSR 模式同样只按 UVInterval 投递 runBrowser，不等待 browserResult。
+                                var uvPayload = BuildRunBrowserPayload(ctx, rawTask, dev, consumerId, uvIndex);
+                                await session.RunBrowserNoWaitAsync(
+                                    ctx.UniqueId,
+                                    browserId,
+                                    uvPayload,
+                                    innerToken);
+                            }
+                            catch
+                            {
+                                inFlightBrowsers.TryRemove(browserId, out _);
+                                Interlocked.Decrement(ref dispatchedUvCount);
+                                throw;
+                            }
 
                             if (uvIndex < ctx.TotalUV - 1)
                                 await Task.Delay(uvIntervalMs, innerToken);
@@ -658,7 +679,7 @@ namespace MainClient
                         }
                     }
 
-                    return false;
+                    return await WaitForDispatchedUvCompletionAsync();
                 }
 
                 for (int uvIndex = 0; uvIndex < ctx.TotalUV; uvIndex++)
@@ -694,7 +715,9 @@ namespace MainClient
 
                         try
                         {
-                            await session.CreateBrowserAsync(ctx.UniqueId, browserId, innerToken);
+                            // 多 UV 只按配置间隔投递到 CefClient，不等待子进程完成 browserCreated。
+                            // CefClient 的管道读取是顺序的，同一个 browserId 会先执行 createBrowser 再执行 runBrowser。
+                            await session.CreateBrowserNoWaitAsync(ctx.UniqueId, browserId, innerToken);
 
                             var uvPayload = BuildRunBrowserPayload(ctx, rawTask, dev, consumerId, uvIndex);
                             await session.RunBrowserNoWaitAsync(
@@ -737,15 +760,7 @@ namespace MainClient
                     }
                 }
 
-                if (Volatile.Read(ref dispatchedUvCount) <= 0)
-                    return false;
-
-                TryCompleteAll();
-
-                using var completeReg = innerToken.Register(() => completedUvTcs.TrySetCanceled(innerToken));
-                await completedUvTcs.Task;
-
-                return stopRemainingUvByResult;
+                return await WaitForDispatchedUvCompletionAsync();
             }
             finally
             {
