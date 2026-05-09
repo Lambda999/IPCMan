@@ -153,6 +153,21 @@ namespace MainClient.Ipc
                 throw new InvalidOperationException(resp.Message ?? $"createBrowser failed: {browserId}");
         }
 
+        public async Task CreateBrowserNoWaitAsync(
+            string taskId,
+            string browserId,
+            CancellationToken cancellationToken = default)
+        {
+            await SendAsync(
+                new PipeEnvelope
+                {
+                    Type = "createBrowser",
+                    TaskId = taskId,
+                    BrowserId = browserId
+                },
+                cancellationToken);
+        }
+
         public async Task<BrowserRunResponse> RunBrowserAsync(
             string taskId,
             string browserId,
