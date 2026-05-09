@@ -1,5 +1,6 @@
 ﻿namespace CefClient
 {
+    using CefClient.Common;
     using CefSharp;
     using CefSharp.OffScreen;
     using System;
@@ -81,10 +82,13 @@
             var cachePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "User Data", consumerId, uvIndex);
             Directory.CreateDirectory(cachePath);
 
+
             var os = GetNullableInt(payload, "os") ?? 0;
             var device = payload?["device"];
             var sw = GetNullableInt(device, "sw") ?? 412;
             var sh = GetNullableInt(device, "sh") ?? 915;
+            var deviceProfile = AndroidViewportMatcher.Match(sw, sh);
+
 
             var browserSettings = new BrowserSettings
             {
@@ -102,14 +106,16 @@
                 using var requestContext = new RequestContext(requestContextSettings);
                 using var browser = new ChromiumWebBrowser("about:blank", browserSettings, requestContext)
                 {
-                    Size = new Size(sw, sh)
+                    Size = new Size(deviceProfile.CssWidth, deviceProfile.CssHeight)
                 };
-                using var devToolsClient = browser.GetDevToolsClient();
 
+                await browser.WaitForInitialLoadAsync();
+                using var devToolsClient = browser.GetDevToolsClient();
                 await devToolsClient.Storage.ClearDataForOriginAsync("*", "cache_storage,cookies,local_storage");
                 await devToolsClient.Emulation.SetTouchEmulationEnabledAsync(true, Random.Shared.Next(4, 6));
-                await devToolsClient.Emulation.SetDeviceMetricsOverrideAsync(width: sw, height: sh, deviceScaleFactor: 1, mobile: true);
+                await devToolsClient.Emulation.SetDeviceMetricsOverrideAsync(width: deviceProfile.CssWidth, height: deviceProfile.CssHeight, deviceScaleFactor: deviceProfile.DeviceScaleFactor, mobile: true);
                 await devToolsClient.Emulation.SetUserAgentOverrideAsync(userAgent: payload?["userAgent"]?.ToString() ?? string.Empty, platform: os == 1 ? "Android" : "iPhone");
+
 
                 var loadTimeoutMs = GetPositiveInt(payload, "loadTimeoutMs", DefaultLoadTimeoutMs);
                 var firstScreenshotDelayMs = GetPositiveInt(payload, "firstScreenshotDelayMs", DefaultFirstScreenshotDelayMs);
