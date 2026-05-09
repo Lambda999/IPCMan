@@ -1,11 +1,11 @@
-﻿using MainClient.Common;
+using MainClient.Common;
 using MainClient.Infrastructure;
 using MainClient.Models;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Collections.Concurrent;
 using System.IO.Compression;
 using System.Net.Http.Headers;
@@ -65,8 +65,8 @@ namespace MainClient.UiTask
         }
 
         #region 系统设备
-        private static ConcurrentQueue<JToken> ANDROID_QUEUE = new();
-        private static ConcurrentQueue<JToken> iOS_QUEUE = new();
+        private static ConcurrentQueue<JsonNode> ANDROID_QUEUE = new();
+        private static ConcurrentQueue<JsonNode> iOS_QUEUE = new();
         private readonly SemaphoreSlim iOS_SIGNAL = new(1, 1);
         private readonly SemaphoreSlim ANDROID_SIGNAL = new(1, 1);
         private async Task<string?> GetDevByOSInternal(OSType os, int count)
@@ -93,9 +93,9 @@ namespace MainClient.UiTask
             }
             return null;
         }
-        public async Task<JToken?> GetDevByOS(OSType os, int count = 5)
+        public async Task<JsonNode?> GetDevByOS(OSType os, int count = 5)
         {
-            (ConcurrentQueue<JToken> devs, SemaphoreSlim sem) =
+            (ConcurrentQueue<JsonNode> devs, SemaphoreSlim sem) =
                 os == OSType.IOS ?
                 (iOS_QUEUE, iOS_SIGNAL) :
                 (ANDROID_QUEUE, ANDROID_SIGNAL);
@@ -116,16 +116,24 @@ namespace MainClient.UiTask
                 {
                     return null;
                 }
-                var json = JObject.Parse(text);
-                var data = json["data"] as JArray;
+                var json = JsonNode.Parse(text);
+                var data = json["data"] as JsonArray;
                 if (data == null || data.Count == 0)
                 {
                     return null;
                 }
-                JToken first = data[0];
+                var first = data[0]?.DeepClone();
+                if (first is null)
+                {
+                    return null;
+                }
                 for (int i = 1; i < data.Count; i++)
                 {
-                    devs.Enqueue(data[i]);
+                    var item = data[i]?.DeepClone();
+                    if (item is not null)
+                    {
+                        devs.Enqueue(item);
+                    }
                 }
 
                 return first;
@@ -150,10 +158,10 @@ namespace MainClient.UiTask
                 _ => OSType.ANDROID
             };
         }
-        public async Task<JToken?> GetDeviceAsync(OSType os, int count)
+        public async Task<JsonNode?> GetDeviceAsync(OSType os, int count)
         {
             int retry = 0;
-            JToken? dev = null;
+            JsonNode? dev = null;
             while (retry++ < 5)
             {
                 dev = await GetDevByOS(os, count);
@@ -173,7 +181,7 @@ namespace MainClient.UiTask
         /// <param name="metrics">指标字典，例如 start, dsp, click, success</param>
         /// <param name="token">取消令牌</param>
         /// <returns></returns>
-        public async Task<JToken?> UpdateTaskStatusAsync(int taskId, Dictionary<string, long> metrics, CancellationToken token = default)
+        public async Task<JsonNode?> UpdateTaskStatusAsync(int taskId, Dictionary<string, long> metrics, CancellationToken token = default)
         {
             try
             {
@@ -188,11 +196,11 @@ namespace MainClient.UiTask
                     version = _options.AppVersion,
                     metrics = metrics
                 };
-                var postData = JsonConvert.SerializeObject(bidRequest);
+                var postData = JsonSerializer.Serialize(bidRequest);
                 using var content = new StringContent(postData, Encoding.UTF8, "application/json");
                 using var response = await client.PostAsync(builder.ToString(), content, token);
                 response.EnsureSuccessStatusCode();
-                return JObject.Parse(await response.Content.ReadAsStringAsync(token));
+                return JsonNode.Parse(await response.Content.ReadAsStringAsync(token));
             }
             catch (OperationCanceledException)
             {
@@ -212,7 +220,7 @@ namespace MainClient.UiTask
         /// <param name="count"></param>
         /// <param name="token"></param>
         /// <returns></returns>
-        public async Task<JToken?> UpdateTaskStatusAsync(int taskId, StateType type = StateType.Start, int count = 1, CancellationToken token = default)
+        public async Task<JsonNode?> UpdateTaskStatusAsync(int taskId, StateType type = StateType.Start, int count = 1, CancellationToken token = default)
         {
             var metrics = new Dictionary<string, long>
             {
@@ -227,7 +235,7 @@ namespace MainClient.UiTask
         /// <param name="taskId"></param>
         /// <param name="token"></param>
         /// <returns></returns>
-        public async Task<JToken?> GetTaskStatusAsync(int taskId, CancellationToken token = default)
+        public async Task<JsonNode?> GetTaskStatusAsync(int taskId, CancellationToken token = default)
         {
             try
             {
@@ -235,7 +243,7 @@ namespace MainClient.UiTask
                 var baseUrl = new Uri(_appSettings.TaskApiUrl).GetLeftPart(UriPartial.Authority);
                 using var response = await client.GetAsync($"{baseUrl}/api{_apiVersion}/task-status.php?action=task_status&id={taskId}&host={System.Web.HttpUtility.UrlEncode(host)}&_t={System.DateTime.Now.Ticks}", token);
                 response.EnsureSuccessStatusCode();
-                return JObject.Parse(await response.Content.ReadAsStringAsync(token));
+                return JsonNode.Parse(await response.Content.ReadAsStringAsync(token));
             }
             catch (OperationCanceledException)
             {
@@ -272,7 +280,7 @@ namespace MainClient.UiTask
         /// <param name="metrics"></param>
         /// <param name="token"></param>
         /// <returns></returns>
-        public async Task<JToken?> UpdateHostStatusAsync(Dictionary<string, long> metrics, CancellationToken token = default)
+        public async Task<JsonNode?> UpdateHostStatusAsync(Dictionary<string, long> metrics, CancellationToken token = default)
         {
             metrics ??= new Dictionary<string, long>();
             string wordName = "default";
@@ -294,12 +302,12 @@ namespace MainClient.UiTask
                     wordname = wordName,
                     metrics = metrics,
                 };
-                var postData = JsonConvert.SerializeObject(bidRequest);
+                var postData = JsonSerializer.Serialize(bidRequest);
                 using var content = new StringContent(postData, Encoding.UTF8, "application/json");
                 using var response = await client.PostAsync(builder.ToString(), content, token);
                 response.EnsureSuccessStatusCode();
                 var resp = await response.Content.ReadAsStringAsync(token);
-                return JObject.Parse(resp);
+                return JsonNode.Parse(resp);
             }
             catch (OperationCanceledException)
             {
@@ -318,7 +326,7 @@ namespace MainClient.UiTask
         /// <param name="count"></param>
         /// <param name="token"></param>
         /// <returns></returns>
-        public async Task<JToken?> UpdateHostStatusAsync(StateType type = StateType.Start, int count = 1, CancellationToken token = default)
+        public async Task<JsonNode?> UpdateHostStatusAsync(StateType type = StateType.Start, int count = 1, CancellationToken token = default)
         {
             var metrics = new Dictionary<string, long>
             {
@@ -332,7 +340,7 @@ namespace MainClient.UiTask
         /// </summary>
         /// <param name="token"></param>
         /// <returns></returns>
-        public async Task<JToken?> GetHostTodayStatusAsync(CancellationToken token = default)
+        public async Task<JsonNode?> GetHostTodayStatusAsync(CancellationToken token = default)
         {
             var host = await CommonHelper.GetHostAsync();
             try
@@ -340,7 +348,7 @@ namespace MainClient.UiTask
                 var baseUrl = new Uri(_appSettings.TaskApiUrl).GetLeftPart(UriPartial.Authority);
                 using var response = await client.GetAsync($"{baseUrl}/api{_apiVersion}/task-status.php?action=host_today_status&host={System.Web.HttpUtility.UrlEncode(host)}&_t={System.DateTime.Now.Ticks}", token);
                 response.EnsureSuccessStatusCode();
-                return JObject.Parse(await response.Content.ReadAsStringAsync(token));
+                return JsonNode.Parse(await response.Content.ReadAsStringAsync(token));
             }
             catch (OperationCanceledException)
             {
@@ -358,7 +366,7 @@ namespace MainClient.UiTask
         /// </summary>
         /// <param name="token"></param>
         /// <returns></returns>
-        public async Task<JToken?> GetHostHourStatusAsync(CancellationToken token = default)
+        public async Task<JsonNode?> GetHostHourStatusAsync(CancellationToken token = default)
         {
             var host = await CommonHelper.GetHostAsync();
             try
@@ -366,7 +374,7 @@ namespace MainClient.UiTask
                 var baseUrl = new Uri(_appSettings.TaskApiUrl).GetLeftPart(UriPartial.Authority);
                 using var response = await client.GetAsync($"{baseUrl}/api{_apiVersion}/task-status.php?action=host_hour_status&host={System.Web.HttpUtility.UrlEncode(host)}&_t={System.DateTime.Now.Ticks}", token);
                 response.EnsureSuccessStatusCode();
-                return JObject.Parse(await response.Content.ReadAsStringAsync(token));
+                return JsonNode.Parse(await response.Content.ReadAsStringAsync(token));
             }
             catch (OperationCanceledException)
             {
@@ -382,7 +390,7 @@ namespace MainClient.UiTask
         #endregion
 
         #region 代理状态统计&更新
-        public async Task<JToken?> UpdateProxyIpStatAsync(int taskId, Dictionary<string, long> metrics, IEnumerable<string> ips, CancellationToken token = default)
+        public async Task<JsonNode?> UpdateProxyIpStatAsync(int taskId, Dictionary<string, long> metrics, IEnumerable<string> ips, CancellationToken token = default)
         {
             try
             {
@@ -398,11 +406,11 @@ namespace MainClient.UiTask
                 body["host"] = host;
                 body["agency"] = _appSettings.ProxyIpUrl;
 
-                var postData = JsonConvert.SerializeObject(body);
+                var postData = JsonSerializer.Serialize(body);
                 using var content = new StringContent(postData, Encoding.UTF8, "application/json");
                 using var response = await client.PostAsync(builder.ToString(), content, token);
                 response.EnsureSuccessStatusCode();
-                return JObject.Parse(await response.Content.ReadAsStringAsync(token));
+                return JsonNode.Parse(await response.Content.ReadAsStringAsync(token));
             }
             catch (OperationCanceledException)
             {
@@ -416,7 +424,7 @@ namespace MainClient.UiTask
         }
 
         //taskId, ip, 1, token
-        public async Task<JToken?> UpdateProxyIpConsumedIpAsync(int taskId, string ip, int count = 1, CancellationToken token = default)
+        public async Task<JsonNode?> UpdateProxyIpConsumedIpAsync(int taskId, string ip, int count = 1, CancellationToken token = default)
         {
             try
             {
@@ -432,11 +440,11 @@ namespace MainClient.UiTask
                     version = _options.AppVersion,
                     agency = _appSettings.ProxyIpUrl,
                 };
-                var postData = JsonConvert.SerializeObject(metrics);
+                var postData = JsonSerializer.Serialize(metrics);
                 using var content = new StringContent(postData, Encoding.UTF8, "application/json");
                 using var response = await client.PostAsync(builder.ToString(), content, token);
                 response.EnsureSuccessStatusCode();
-                return JObject.Parse(await response.Content.ReadAsStringAsync(token));
+                return JsonNode.Parse(await response.Content.ReadAsStringAsync(token));
             }
             catch (OperationCanceledException)
             {
@@ -449,7 +457,7 @@ namespace MainClient.UiTask
             return null;
         }
 
-        public async Task<JToken?> UpdateProxyIpConsumedIpAsync(int taskId, IEnumerable<string> ips, int count = 1, CancellationToken token = default)
+        public async Task<JsonNode?> UpdateProxyIpConsumedIpAsync(int taskId, IEnumerable<string> ips, int count = 1, CancellationToken token = default)
         {
             try
             {
@@ -467,12 +475,12 @@ namespace MainClient.UiTask
                     count = count,
                     agency = _appSettings.ProxyIpUrl
                 };
-                var postData = JsonConvert.SerializeObject(metrics);
+                var postData = JsonSerializer.Serialize(metrics);
                 using var content = new StringContent(postData, Encoding.UTF8, "application/json");
                 using var response = await client.PostAsync(builder.ToString(), content, token);
                 response.EnsureSuccessStatusCode();
 
-                return JObject.Parse(await response.Content.ReadAsStringAsync(token));
+                return JsonNode.Parse(await response.Content.ReadAsStringAsync(token));
             }
             catch (OperationCanceledException)
             {

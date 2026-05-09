@@ -7,16 +7,16 @@ using CefClient.Handler.Event;
 using CefSharp;
 using CefSharp.Handler;
 using CefSharp.ResponseFilter;
-using Newtonsoft.Json.Linq;
+using System.Text.Json.Nodes;
 
 namespace CefClient.Handler
 {
     public class CfxResourceRequestHandler : ResourceRequestHandler
     {
-        public readonly JObject _args = null;
+        public readonly JsonObject _args = null;
         private string _localCacheFilePath = string.Empty;
         private bool IsLocalCacheFileExist => System.IO.File.Exists(_localCacheFilePath);
-        public CfxResourceRequestHandler(JObject args)
+        public CfxResourceRequestHandler(JsonObject args)
         {
             this._args = args;
         }
@@ -68,7 +68,7 @@ namespace CefClient.Handler
         protected override CefReturnValue OnBeforeResourceLoad(IWebBrowser chromiumWebBrowser, IBrowser browser, IFrame frame, IRequest request, IRequestCallback callback)
         {
 
-            var ua = this._args.SelectToken("dev.ua").Value<string>();
+            var ua = this._args["dev"]?["ua"]?.GetValue<string>() ?? string.Empty;
             var headers = request.Headers;
             headers["User-Agent"] = ua;
             request.Headers = headers;
