@@ -30,9 +30,34 @@ public sealed class PipeHostService : IAsyncDisposable
         _pipeName = pipeName;
         _mainForm = mainForm;
         _mainForm.BrowserLog += message => _ = SendBrowserLogSafeAsync(message);
+        _mainForm.BrowserScreenshot += (browserId, bytes) => _ = SendBrowserScreenshotSafeAsync(browserId, bytes);
         _mainForm.BrowserStatus += SendBrowserStatusSafeAsync;
     }
 
+    private async Task SendBrowserScreenshotSafeAsync(string browserId, byte[] screenshotBytes)
+    {
+        try
+        {
+            await SendAsync(new PipeEnvelope
+            {
+                Type = "browserScreenshot",
+                TaskId = _taskId,
+                BrowserId = browserId,
+                Success = true,
+                Message = "screenshot captured",
+                Data = new System.Text.Json.Nodes.JsonObject
+                {
+                    ["contentType"] = "image/png",
+                    ["base64"] = Convert.ToBase64String(screenshotBytes),
+                    ["byteLength"] = screenshotBytes.Length,
+                    ["capturedAt"] = DateTimeOffset.Now.ToString("O")
+                }
+            }, CancellationToken.None);
+        }
+        catch
+        {
+        }
+    }
 
     private async Task SendBrowserLogSafeAsync(string message)
     {

@@ -1,4 +1,4 @@
-﻿namespace CefClient
+namespace CefClient
 {
     using CefClient.Common;
     using CefClient.Handler;
@@ -6,7 +6,6 @@
     using CefSharp.OffScreen;
     using System;
     using System.Diagnostics;
-    using System.Drawing;
     using System.Text.Json.Nodes;
 
     public sealed class BrowserSlot : IAsyncDisposable
@@ -19,14 +18,14 @@
         private const int DefaultInitialLoadTimeoutMs = 5000;
 
         public string BrowserId { get; }
-        private readonly Action<string, Image> _screenshotReady;
+        private readonly Action<string, byte[]> _screenshotReady;
         private readonly Action<string> _log;
         private readonly Func<BrowserRunStatus, CancellationToken, Task>? _statusChanged;
         private int _disposed;
 
         public BrowserSlot(
             string browserId,
-            Action<string, Image> screenshotReady,
+            Action<string, byte[]> screenshotReady,
             Action<string> log,
             Func<BrowserRunStatus, CancellationToken, Task>? statusChanged = null)
         {
@@ -406,10 +405,7 @@
                 if (screenshotBytes == null || screenshotBytes.Length == 0)
                     return false;
 
-                using var stream = new MemoryStream(screenshotBytes);
-                using var image = Image.FromStream(stream);
-                //image.Save($"test_{Guid.NewGuid()}.png");
-                _screenshotReady(BrowserId, new Bitmap(image));
+                _screenshotReady(BrowserId, screenshotBytes);
                 return true;
             }
             catch (OperationCanceledException)

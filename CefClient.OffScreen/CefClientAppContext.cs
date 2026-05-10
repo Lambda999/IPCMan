@@ -1,20 +1,21 @@
-﻿ 
-    namespace CefClient
+namespace CefClient
     {
         public sealed class CefClientAppContext : ApplicationContext
         {
             private readonly MainForm _mainForm;
             private readonly PipeHostService _pipeHost;
+            private readonly bool _headless;
             private readonly CancellationTokenSource _cts = new();
 
             private int _started;
 
-            public CefClientAppContext(MainForm mainForm, PipeHostService pipeHost)
+            public CefClientAppContext(MainForm mainForm, PipeHostService pipeHost, bool headless = false)
             {
                 _mainForm = mainForm;
                 _pipeHost = pipeHost;
+                _headless = headless;
 
-                MainForm = _mainForm;
+                MainForm = _headless ? null : _mainForm;
 
                 _mainForm.FormClosed += (_, _) =>
                 {
@@ -36,6 +37,12 @@
                 if (Interlocked.Exchange(ref _started, 1) != 0)
                     return;
 
+                if (_headless)
+                {
+                    ThreadPool.QueueUserWorkItem(_ => StartPipeLoop());
+                    return;
+                }
+
                 // 等消息循环起来后再启动
                 _mainForm.Shown += MainForm_Shown;
             }
@@ -43,7 +50,11 @@
             private void MainForm_Shown(object? sender, EventArgs e)
             {
                 _mainForm.Shown -= MainForm_Shown;
+                StartPipeLoop();
+            }
 
+            private void StartPipeLoop()
+            {
                 _ = Task.Run(async () =>
                 {
                     try

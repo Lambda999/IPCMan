@@ -25,6 +25,7 @@ namespace MainClient
         private readonly AdeHelper _adeHelper;
         private readonly IpHelper _ipHelper;
         private readonly ProxyTester _ipTester;
+        private OsrScreenshotPreviewForm? _osrScreenshotPreviewForm;
 
 
 
@@ -427,6 +428,52 @@ namespace MainClient
         }
 
 
+        private Task ShowOsrScreenshotAsync(PipeEnvelope screenshot)
+        {
+            if (_appSettings.IsHiddenMode || !_appSettings.IsOsrMode)
+                return Task.CompletedTask;
+
+            var browserId = screenshot.BrowserId;
+            var base64 = screenshot.Data?["base64"]?.GetValue<string>();
+            if (string.IsNullOrWhiteSpace(browserId) || string.IsNullOrWhiteSpace(base64))
+                return Task.CompletedTask;
+
+            byte[] screenshotBytes;
+            try
+            {
+                screenshotBytes = Convert.FromBase64String(base64);
+            }
+            catch (FormatException ex)
+            {
+                _logger.LogWarning(ex, "Invalid OSR screenshot payload. taskId={TaskId}, browserId={BrowserId}", screenshot.TaskId, browserId);
+                return Task.CompletedTask;
+            }
+
+            if (IsDisposed || Disposing)
+                return Task.CompletedTask;
+
+            void ShowOnUiThread()
+            {
+                if (IsDisposed || Disposing)
+                    return;
+
+                if (_osrScreenshotPreviewForm == null || _osrScreenshotPreviewForm.IsDisposed)
+                {
+                    _osrScreenshotPreviewForm = new OsrScreenshotPreviewForm();
+                    _osrScreenshotPreviewForm.FormClosed += (_, _) => _osrScreenshotPreviewForm = null;
+                }
+
+                _osrScreenshotPreviewForm.ShowScreenshot(browserId, screenshotBytes);
+            }
+
+            if (InvokeRequired)
+                BeginInvoke((Action)ShowOnUiThread);
+            else
+                ShowOnUiThread();
+
+            return Task.CompletedTask;
+        }
+
         private async Task<bool> ExecuteTaskByCefClientAsync(
            ConsumerTaskContext ctx,
            JsonNode rawTask,
@@ -459,6 +506,19 @@ namespace MainClient
                 _logger.LogInformation("CefClient[{TaskId}] {Message}", ctx.TaskId, message);
                 return Task.CompletedTask;
             };
+
+
+            session.OnBrowserScreenshot += screenshot =>
+            {
+                if (!string.IsNullOrWhiteSpace(screenshot.TaskId) &&
+                    !string.Equals(screenshot.TaskId, ctx.UniqueId, StringComparison.OrdinalIgnoreCase))
+                {
+                    return Task.CompletedTask;
+                }
+
+                return ShowOsrScreenshotAsync(screenshot);
+            };
+
             session.OnBrowserStatus += status =>
             {
                 if (!string.IsNullOrWhiteSpace(status.TaskId) &&
