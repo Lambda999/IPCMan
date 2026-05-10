@@ -5,6 +5,8 @@ namespace CefClient
     using CefSharp;
     using CefSharp.OffScreen;
     using System;
+    using System.Collections.Specialized;
+    using System.Net;
     using System.Diagnostics;
     using System.Text.Json.Nodes;
 
@@ -78,6 +80,9 @@ namespace CefClient
 
             var task = payload?["task"];
             var url = payload?["url"]?.ToString();
+            var referer = GetString(payload, "referer");
+            if (string.IsNullOrWhiteSpace(referer))
+                referer = GetString(task, "referer");
             var taskId = payload?["taskId"]?.ToString() ?? BrowserId;
             var consumerId = payload?["consumerId"]?.ToString() ?? "unknown";
             var uvIndex = payload?["uvIndex"]?.ToString() ?? BrowserId;
@@ -149,6 +154,8 @@ namespace CefClient
 
                 await devToolsClient.Emulation.SetUserAgentOverrideAsync(userAgent: ua, platform: platform);
 
+                var navigationHeaders = BuildNavigationHeaders(ua, referer);
+
                 await devToolsClient.Emulation.SetDeviceMetricsOverrideAsync(
                     width: devProfile.CssWidth,
                     height: devProfile.CssHeight,
@@ -180,7 +187,7 @@ namespace CefClient
                     var navigationTask = browser.WaitForNavigationAsync(
                         TimeSpan.FromMilliseconds(loadTimeoutMs),
                         cancellationToken);
-                    browser.Load(url);
+                    LoadUrl(browser, url, "GET", navigationHeaders);
 
                     await Task.Delay(TimeSpan.FromMilliseconds(firstScreenshotDelayMs), cancellationToken);
 
@@ -205,6 +212,7 @@ namespace CefClient
                     var pvData = new JsonObject
                     {
                         ["url"] = url,
+                        ["referer"] = referer,
                         ["cachePath"] = cachePath,
                         ["pvIndex"] = pvIndex,
                         ["pvTotal"] = pvTotal,
@@ -245,6 +253,7 @@ namespace CefClient
                 await PublishStatusAsync("dsp", true, finalLoadCompleted ? "page opened" : "页面加载较慢，已按超时继续", cancellationToken, new JsonObject
                 {
                     ["url"] = url,
+                    ["referer"] = referer,
                     ["cachePath"] = cachePath,
                     ["pvTotal"] = pvTotal,
                     ["completedPv"] = completedPv,
@@ -265,6 +274,7 @@ namespace CefClient
                 {
                     ["title"] = title ?? "",
                     ["url"] = url,
+                    ["referer"] = referer,
                     ["pvTotal"] = pvTotal,
                     ["completedPv"] = completedPv,
                     ["pvIntervalMs"] = pvIntervalMs,
@@ -295,6 +305,7 @@ namespace CefClient
                 await PublishStatusAsync("error", false, "取消", CancellationToken.None, new JsonObject
                 {
                     ["url"] = url ?? string.Empty,
+                    ["referer"] = referer,
                     ["taskId"] = taskId,
                     ["consumerId"] = consumerId,
                     ["uvIndex"] = uvIndex
@@ -312,6 +323,7 @@ namespace CefClient
                 await PublishStatusAsync("error", false, ex.Message, CancellationToken.None, new JsonObject
                 {
                     ["url"] = url ?? string.Empty,
+                    ["referer"] = referer,
                     ["taskId"] = taskId,
                     ["consumerId"] = consumerId,
                     ["uvIndex"] = uvIndex
@@ -329,6 +341,7 @@ namespace CefClient
                 await PublishStatusAsync("complete", true, "RunAsync complete", CancellationToken.None, new JsonObject
                 {
                     ["url"] = url ?? string.Empty,
+                    ["referer"] = referer,
                     ["taskId"] = taskId,
                     ["consumerId"] = consumerId,
                     ["uvIndex"] = uvIndex
@@ -339,6 +352,63 @@ namespace CefClient
 
 
 
+
+
+        private static WebHeaderCollection? BuildNavigationHeaders(string? userAgent, string? referer)
+        {
+            if (string.IsNullOrWhiteSpace(userAgent) && string.IsNullOrWhiteSpace(referer))
+                return null;
+
+            var headers = new WebHeaderCollection();
+            if (!string.IsNullOrWhiteSpace(userAgent))
+                headers[HttpRequestHeader.UserAgent] = userAgent;
+            if (!string.IsNullOrWhiteSpace(referer))
+                headers[HttpRequestHeader.Referer] = referer;
+
+            return headers;
+        }
+
+        public static void LoadUrl(
+            ChromiumWebBrowser browser,
+            string? url,
+            string requestMethod = "GET",
+            WebHeaderCollection? headers = null,
+            byte[]? postDataBytes = null)
+        {
+            if (browser == null || browser.IsDisposed || string.IsNullOrWhiteSpace(url))
+                return;
+
+            using var frame = browser.GetMainFrame();
+            var initializePostData = string.Equals(requestMethod, "POST", StringComparison.OrdinalIgnoreCase);
+            var request = frame.CreateRequest(initializePostData: initializePostData);
+            if (initializePostData && postDataBytes is { Length: > 0 })
+            {
+                request.InitializePostData();
+                request.PostData.AddData(postDataBytes);
+            }
+
+            request.Url = url;
+            request.Method = string.IsNullOrWhiteSpace(requestMethod) ? "GET" : requestMethod;
+
+            if (headers != null && headers.HasKeys())
+            {
+                var originHeaders = request.Headers ?? new NameValueCollection();
+                foreach (string keyName in headers.AllKeys)
+                {
+                    originHeaders.Set(keyName, headers[keyName]);
+                }
+
+                var refererValue = headers[HttpRequestHeader.Referer];
+                if (!string.IsNullOrWhiteSpace(refererValue))
+                {
+                    request.SetReferrer(refererValue, ReferrerPolicy.NeverClearReferrer);
+                }
+
+                request.Headers = originHeaders;
+            }
+
+            frame.LoadRequest(request);
+        }
 
         private async Task PublishStatusAsync(
             string stage,
@@ -488,6 +558,26 @@ namespace CefClient
             }
 
             return array;
+        }
+
+
+        private static string GetString(JsonNode? payload, string name, string defaultValue = "")
+        {
+            var node = payload?[name];
+            if (node == null)
+                return defaultValue;
+
+            try
+            {
+                if (node is JsonArray array)
+                    return array.FirstOrDefault()?.GetValue<string>() ?? defaultValue;
+
+                return node.GetValue<string>() ?? defaultValue;
+            }
+            catch
+            {
+                return node.ToString();
+            }
         }
 
         private static bool GetBool(JsonNode? payload, string name, bool defaultValue)
