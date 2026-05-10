@@ -15,8 +15,10 @@ namespace MainClient
 
         public OsrScreenshotPreviewForm()
         {
+            AutoScaleDimensions = new SizeF(120F, 120F);
+            AutoScaleMode = AutoScaleMode.Dpi;
             Text = "CefClient.OffScreen 截图预览";
-            ClientSize = new Size(1182, 1053);
+            ClientSize = new Size(1500, 1053);
             ShowInTaskbar = true;
             Controls.Add(_screenshotPanel);
         }
@@ -135,8 +137,8 @@ namespace MainClient
             {
                 Name = GetScreenshotItemName(consumerId),
                 Tag = consumerId,
-                Width = 420,
-                Height = 920,
+                Width = 360,
+                Height = 748,
                 Margin = new Padding(4),
                 BorderStyle = BorderStyle.FixedSingle
             };
@@ -146,7 +148,7 @@ namespace MainClient
                 AutoEllipsis = true,
                 Dock = DockStyle.Top,
                 Height = 28,
-                Text = $"Consumer {consumerId}",
+                Text = $"CefClient {consumerId}",
                 TextAlign = ContentAlignment.MiddleCenter
             };
 
