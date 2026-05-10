@@ -1,4 +1,4 @@
-﻿using CefClient.Common;
+using CefClient.Common;
 using CefSharp;
 
 
@@ -124,21 +124,20 @@ namespace CefClient
                 }
             };
 
-            var mainForm = new MainForm();
-
-            // 带管道参数：由主进程调度
+            // 带管道参数：由主进程调度。OSR 子进程本身不显示窗体，截图通过管道回传给 MainClient。
             if (!string.IsNullOrWhiteSpace(pipeName))
             {
+                var mainForm = new MainForm(previewEnabled: false);
                 var pipeHost = new PipeHostService(pipeName, mainForm);
-                var appContext = new CefClientAppContext(mainForm, pipeHost);
+                var appContext = new CefClientAppContext(mainForm, pipeHost, headless: true);
 
                 appContext.Start();
                 Application.Run(appContext);
                 return 0;
             }
 
-            // 不带管道参数：本地直接调试运行
-            Application.Run(mainForm);
+            // 不带管道参数：本地直接调试运行，保留 OSR 截图预览窗体。
+            Application.Run(new MainForm(previewEnabled: true));
             return 0;
         }
     }

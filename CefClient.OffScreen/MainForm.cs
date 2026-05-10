@@ -1,4 +1,4 @@
-﻿using CefSharp;
+using CefSharp;
 using CefSharp.OffScreen;
 using System.Collections.Concurrent;
 using System.Drawing;
@@ -9,17 +9,23 @@ namespace CefClient
 {
     public partial class MainForm : Form
     {
-        private static readonly Size BrowserViewportSize = new(420, 920);
         private readonly ConcurrentDictionary<string, BrowserSlot> _slots = new();
+        private readonly bool _previewEnabled;
 
         public event Action<string>? BrowserLog;
+        public event Action<string, byte[]>? BrowserScreenshot;
         public event Func<string, BrowserRunStatus, CancellationToken, Task>? BrowserStatus;
 
-        public MainForm()
+        public MainForm(bool previewEnabled = true)
         {
+            _previewEnabled = previewEnabled;
             InitializeComponent();
-            ShowInTaskbar = true;
-            //WindowState = FormWindowState.Minimized;
+            ShowInTaskbar = _previewEnabled;
+            if (!_previewEnabled)
+            {
+                Opacity = 0;
+                WindowState = FormWindowState.Minimized;
+            }
         }
 
         private void MainForm_Load(object sender, EventArgs e)
@@ -43,8 +49,10 @@ namespace CefClient
             JsonNode? payload,
             CancellationToken cancellationToken = default)
         {
-            ShowBrowserPlaceholder(browserId);
-            var slot = new BrowserSlot(browserId, ShowBrowserScreenshot, WriteBrowserLog, PublishBrowserStatusAsync);
+            if (_previewEnabled)
+                ShowBrowserPlaceholder(browserId);
+
+            var slot = new BrowserSlot(browserId, HandleBrowserScreenshot, WriteBrowserLog, PublishBrowserStatusAsync);
             return await slot.RunAsync(payload, cancellationToken);
         }
 
@@ -72,6 +80,29 @@ namespace CefClient
                 if (item == null)
                     screenshotPanel.Controls.Add(CreateScreenshotItem(browserId));
             });
+        }
+
+        private void HandleBrowserScreenshot(string browserId, byte[] screenshotBytes)
+        {
+            BrowserScreenshot?.Invoke(browserId, screenshotBytes);
+
+            if (!_previewEnabled)
+                return;
+
+            Image screenshot;
+            try
+            {
+                using var stream = new MemoryStream(screenshotBytes);
+                using var image = Image.FromStream(stream);
+                screenshot = new Bitmap(image);
+            }
+            catch (Exception ex)
+            {
+                WriteBrowserLog($"{browserId}: screenshot decode failed: {ex.Message}");
+                return;
+            }
+
+            ShowBrowserScreenshot(browserId, screenshot);
         }
 
         private void ShowBrowserScreenshot(string browserId, Image screenshot)
@@ -119,6 +150,9 @@ namespace CefClient
 
         private void EnsurePreviewWindowVisible()
         {
+            if (!_previewEnabled)
+                return;
+
             if (!Visible)
                 Show();
 

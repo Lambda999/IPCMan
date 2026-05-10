@@ -1,4 +1,4 @@
-﻿
+
 
 namespace MainClient.Ipc
 {
@@ -41,6 +41,7 @@ namespace MainClient.Ipc
 
         public event Func<string, Task>? OnLog;
         public event Func<PipeEnvelope, Task>? OnBrowserResult;
+        public event Func<PipeEnvelope, Task>? OnBrowserScreenshot;
         public event Func<PipeEnvelope, Task>? OnBrowserStatus;
 
         private static Task InvokeHandlerSafeAsync(Func<Task> handler)
@@ -383,6 +384,14 @@ namespace MainClient.Ipc
                         if (OnBrowserResult != null)
                         {
                             _ = InvokeHandlerSafeAsync(() => OnBrowserResult.Invoke(msg));
+                        }
+                    }
+
+                    if (string.Equals(msg.Type, "browserScreenshot", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (OnBrowserScreenshot != null)
+                        {
+                            _ = InvokeHandlerSafeAsync(() => OnBrowserScreenshot.Invoke(msg));
                         }
                     }
 
