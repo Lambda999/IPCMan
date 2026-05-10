@@ -1012,6 +1012,7 @@ namespace MainClient
                 ["proxy_server"] = ctx.ProxyServer ?? string.Empty,
                 ["task"] = rawTask.DeepClone(),
                 ["url"] = ctx.Url,
+                ["referer"] = ctx.Referer,
                 // OSR 端用这些短超时防止慢页面长期占住本次 UV，影响后续任务调度。
                 ["loadTimeoutMs"] = 8000,
                 ["firstScreenshotDelayMs"] = 1000,
@@ -1042,6 +1043,7 @@ namespace MainClient
 
             var taskIdToken = taskObj["id"];
             var url = taskObj["url"]?.GetValue<string>();
+            var referer = GetFirstString(taskObj["referer"]);
             var totalUvToken = taskObj["uv"];
             var totalPvToken = taskObj["pv"];
 
@@ -1056,6 +1058,7 @@ namespace MainClient
             {
                 TaskId = taskIdToken.GetValue<int>(),
                 Url = url,
+                Referer = referer,
                 TotalUV = Math.Max(1, totalUvToken.GetValue<int>()),
                 TotalPV = Math.Max(1, totalPvToken.GetValue<int>()),
                 DevClientId = devClientId,
@@ -1070,6 +1073,27 @@ namespace MainClient
                 Context = ctx
             };
         }
+
+        private static string GetFirstString(JsonNode? node)
+        {
+            if (node == null)
+                return string.Empty;
+
+            try
+            {
+                if (node is JsonArray array)
+                {
+                    return array.FirstOrDefault()?.GetValue<string>() ?? string.Empty;
+                }
+
+                return node.GetValue<string>() ?? string.Empty;
+            }
+            catch
+            {
+                return node.ToString();
+            }
+        }
+
         /// <summary>
         /// 应用 UV / PV 覆盖配置
         /// </summary>
