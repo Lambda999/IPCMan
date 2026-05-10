@@ -1,146 +1,91 @@
 namespace CefClient
+{
+    public sealed class CefClientAppContext : ApplicationContext
     {
-        public sealed class CefClientAppContext : ApplicationContext
+        private readonly PipeHostService _pipeHost;
+        private readonly CancellationTokenSource _cts = new();
+        private int _started;
+
+        public CefClientAppContext(PipeHostService pipeHost)
         {
-            private readonly MainForm _mainForm;
-            private readonly PipeHostService _pipeHost;
-            private readonly bool _headless;
-            private readonly CancellationTokenSource _cts = new();
+            _pipeHost = pipeHost;
+        }
 
-            private int _started;
+        public void Start()
+        {
+            if (Interlocked.Exchange(ref _started, 1) != 0)
+                return;
 
-            public CefClientAppContext(MainForm mainForm, PipeHostService pipeHost, bool headless = false)
-            {
-                _mainForm = mainForm;
-                _pipeHost = pipeHost;
-                _headless = headless;
+            ThreadPool.QueueUserWorkItem(_ => StartPipeLoop());
+        }
 
-                MainForm = _headless ? null : _mainForm;
-
-                _mainForm.FormClosed += (_, _) =>
-                {
-                    try
-                    {
-                        if (!_cts.IsCancellationRequested)
-                            _cts.Cancel();
-                    }
-                    catch
-                    {
-                    }
-
-                    ExitThread();
-                };
-            }
-
-            public void Start()
-            {
-                if (Interlocked.Exchange(ref _started, 1) != 0)
-                    return;
-
-                if (_headless)
-                {
-                    ThreadPool.QueueUserWorkItem(_ => StartPipeLoop());
-                    return;
-                }
-
-                // 等消息循环起来后再启动
-                _mainForm.Shown += MainForm_Shown;
-            }
-
-            private void MainForm_Shown(object? sender, EventArgs e)
-            {
-                _mainForm.Shown -= MainForm_Shown;
-                StartPipeLoop();
-            }
-
-            private void StartPipeLoop()
-            {
-                _ = Task.Run(async () =>
-                {
-                    try
-                    {
-                        await _pipeHost.StartAsync(_cts.Token);
-                        await _pipeHost.RunLoopAsync(_cts.Token);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                    }
-                    catch (Exception ex)
-                    {
-                        // 这里你接日志
-                        System.Diagnostics.Debug.WriteLine(ex);
-                    }
-                    finally
-                    {
-                        SafeExit();
-                    }
-                });
-            }
-
-            private void SafeExit()
+        private void StartPipeLoop()
+        {
+            _ = Task.Run(async () =>
             {
                 try
                 {
-                    if (!_cts.IsCancellationRequested)
-                        _cts.Cancel();
+                    await _pipeHost.StartAsync(_cts.Token);
+                    await _pipeHost.RunLoopAsync(_cts.Token);
                 }
-                catch
+                catch (OperationCanceledException)
                 {
                 }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine(ex);
+                }
+                finally
+                {
+                    SafeExit();
+                }
+            });
+        }
 
-                try
-                {
-                    if (_mainForm.IsHandleCreated && !_mainForm.IsDisposed)
-                    {
-                        _mainForm.BeginInvoke(new Action(() =>
-                        {
-                            try
-                            {
-                                if (!_mainForm.IsDisposed)
-                                    _mainForm.Close();
-                            }
-                            catch
-                            {
-                                ExitThread();
-                            }
-                        }));
-                    }
-                    else
-                    {
-                        ExitThread();
-                    }
-                }
-                catch
-                {
-                    ExitThread();
-                }
+        private void SafeExit()
+        {
+            try
+            {
+                if (!_cts.IsCancellationRequested)
+                    _cts.Cancel();
+            }
+            catch
+            {
             }
 
-            protected override void Dispose(bool disposing)
+            try
             {
-                if (disposing)
-                {
-                    try
-                    {
-                        _cts.Cancel();
-                    }
-                    catch
-                    {
-                    }
-
-                    try
-                    {
-                        _pipeHost.DisposeAsync().AsTask().GetAwaiter().GetResult();
-                    }
-                    catch
-                    {
-                    }
-
-                    _cts.Dispose();
-                }
-
-                base.Dispose(disposing);
+                ExitThread();
+            }
+            catch
+            {
             }
         }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                try
+                {
+                    _cts.Cancel();
+                }
+                catch
+                {
+                }
+
+                try
+                {
+                    _pipeHost.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                }
+                catch
+                {
+                }
+
+                _cts.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
     }
- 
+}

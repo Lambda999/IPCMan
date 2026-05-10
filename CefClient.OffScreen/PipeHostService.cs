@@ -13,7 +13,7 @@ public sealed class PipeHostService : IAsyncDisposable
     };
 
     private readonly string _pipeName;
-    private readonly MainForm _mainForm;
+    private readonly OffScreenBrowserHost _browserHost;
     private readonly CancellationTokenSource _cts = new();
 
     private NamedPipeClientStream? _client;
@@ -25,13 +25,13 @@ public sealed class PipeHostService : IAsyncDisposable
     private string? _taskId;
     private System.Text.Json.Nodes.JsonNode? _taskPayload;
 
-    public PipeHostService(string pipeName, MainForm mainForm)
+    public PipeHostService(string pipeName, OffScreenBrowserHost browserHost)
     {
         _pipeName = pipeName;
-        _mainForm = mainForm;
-        _mainForm.BrowserLog += message => _ = SendBrowserLogSafeAsync(message);
-        _mainForm.BrowserScreenshot += (browserId, bytes) => _ = SendBrowserScreenshotSafeAsync(browserId, bytes);
-        _mainForm.BrowserStatus += SendBrowserStatusSafeAsync;
+        _browserHost = browserHost;
+        _browserHost.BrowserLog += message => _ = SendBrowserLogSafeAsync(message);
+        _browserHost.BrowserScreenshot += (browserId, bytes) => _ = SendBrowserScreenshotSafeAsync(browserId, bytes);
+        _browserHost.BrowserStatus += SendBrowserStatusSafeAsync;
     }
 
     private async Task SendBrowserScreenshotSafeAsync(string browserId, byte[] screenshotBytes)
@@ -160,7 +160,7 @@ public sealed class PipeHostService : IAsyncDisposable
 
                 case "exit":
                     await WaitRunTasksAsync(TimeSpan.FromSeconds(10));
-                    await _mainForm.RemoveAllBrowsersAsync();
+                    await _browserHost.RemoveAllBrowsersAsync();
                     return;
             }
         }
@@ -168,7 +168,7 @@ public sealed class PipeHostService : IAsyncDisposable
 
     private async Task HandleCreateBrowserAsync(PipeEnvelope req, CancellationToken token)
     {
-        var ok = await _mainForm.CreateBrowserAsync(req.BrowserId!, token);
+        var ok = await _browserHost.CreateBrowserAsync(req.BrowserId!, token);
         await SendLogAsync($"CreateBrowserAsync done. browserId={req.BrowserId}, success={ok}", token);
 
         await SendAsync(new PipeEnvelope
@@ -205,7 +205,7 @@ public sealed class PipeHostService : IAsyncDisposable
             BrowserRunResult result;
             try
             {
-                result = await _mainForm.RunBrowserAsync(browserId, payload, token);
+                result = await _browserHost.RunBrowserAsync(browserId, payload, token);
                 await SendLogAsync($"RunBrowserAsync finished. browserId={browserId}, success={result.Success}, msg={result.Message}", CancellationToken.None);
             }
             catch (Exception ex)
@@ -275,7 +275,7 @@ public sealed class PipeHostService : IAsyncDisposable
     {
         try
         {
-            await _mainForm.RemoveBrowserFastAsync(req.BrowserId!);
+            await _browserHost.RemoveBrowserFastAsync(req.BrowserId!);
             await SendLogAsync($"RemoveBrowserFastAsync done. browserId={req.BrowserId}", token);
 
             await SendAsync(new PipeEnvelope
