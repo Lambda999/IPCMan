@@ -8,6 +8,7 @@ namespace CefClient
     using System.Collections.Specialized;
     using System.Net;
     using System.Diagnostics;
+    using System.Globalization;
     using System.Text.Json.Nodes;
 
     public sealed class BrowserSlot : IAsyncDisposable
@@ -79,6 +80,7 @@ namespace CefClient
         {
 
             var task = payload?["task"];
+            var sleepDelayMs = GetSleepDelayMilliseconds(task);
             var url = payload?["url"]?.ToString();
             var referer = GetString(payload, "referer");
             if (string.IsNullOrWhiteSpace(referer))
@@ -338,13 +340,19 @@ namespace CefClient
             }
             finally
             {
+                if (sleepDelayMs > 0)
+                {
+                    await Task.Delay(sleepDelayMs, CancellationToken.None);
+                }
+
                 await PublishStatusAsync("complete", true, "RunAsync complete", CancellationToken.None, new JsonObject
                 {
                     ["url"] = url ?? string.Empty,
                     ["referer"] = referer,
                     ["taskId"] = taskId,
                     ["consumerId"] = consumerId,
-                    ["uvIndex"] = uvIndex
+                    ["uvIndex"] = uvIndex,
+                    ["sleepDelayMs"] = sleepDelayMs
                 });
             }
         }
@@ -560,6 +568,57 @@ namespace CefClient
             return array;
         }
 
+
+
+        private static int GetSleepDelayMilliseconds(JsonNode? task)
+        {
+            var sleepText = GetNodeText(task?["sleep"]);
+            if (string.IsNullOrWhiteSpace(sleepText))
+                return 0;
+
+            int seconds;
+            var rangeParts = sleepText.Split('-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (rangeParts.Length == 2 &&
+                int.TryParse(rangeParts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var minSeconds) &&
+                int.TryParse(rangeParts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var maxSeconds))
+            {
+                if (maxSeconds < minSeconds)
+                {
+                    (minSeconds, maxSeconds) = (maxSeconds, minSeconds);
+                }
+
+                if (maxSeconds <= 0)
+                    return 0;
+
+                minSeconds = Math.Max(0, minSeconds);
+                var exclusiveMaxSeconds = maxSeconds == int.MaxValue ? int.MaxValue : maxSeconds + 1;
+                seconds = Random.Shared.Next(minSeconds, exclusiveMaxSeconds);
+            }
+            else if (!int.TryParse(sleepText, NumberStyles.Integer, CultureInfo.InvariantCulture, out seconds))
+            {
+                return 0;
+            }
+
+            if (seconds <= 0)
+                return 0;
+
+            return seconds > int.MaxValue / 1000 ? int.MaxValue : seconds * 1000;
+        }
+
+        private static string GetNodeText(JsonNode? node)
+        {
+            if (node == null)
+                return string.Empty;
+
+            try
+            {
+                return node.GetValue<string>() ?? string.Empty;
+            }
+            catch
+            {
+                return node.ToString();
+            }
+        }
 
         private static string GetString(JsonNode? payload, string name, string defaultValue = "")
         {
