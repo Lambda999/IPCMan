@@ -75,30 +75,17 @@ namespace CefClient
 
         public async Task<BrowserRunResult> RunAsync(JsonNode? payload, CancellationToken cancellationToken = default)
         {
+
+            var task = payload?["task"];
             var url = payload?["url"]?.ToString();
             var taskId = payload?["taskId"]?.ToString() ?? BrowserId;
             var consumerId = payload?["consumerId"]?.ToString() ?? "unknown";
             var uvIndex = payload?["uvIndex"]?.ToString() ?? BrowserId;
-            var requestedPvUrls = BuildPvUrls(payload, url);
+
+ 
 
             try
             {
-                if (requestedPvUrls.Count == 0)
-                {
-                    await PublishStatusAsync("error", false, "url 不能为空", cancellationToken, new JsonObject
-                    {
-                        ["taskId"] = taskId,
-                        ["consumerId"] = consumerId,
-                        ["uvIndex"] = uvIndex
-                    });
-
-                    return new BrowserRunResult
-                    {
-                        BrowserId = BrowserId,
-                        Success = false,
-                        Message = "url 不能为空"
-                    };
-                }
 
                 //url = "chrome://version/";
                 //var cachePath = System.IO.Path.GetFullPath(CefCachePaths.GetUvCachePath(taskId, consumerId, uvIndex, BrowserId));
@@ -179,10 +166,10 @@ namespace CefClient
                 var finalScreenshotDelayMs = GetNonNegativeInt(payload, "finalScreenshotDelayMs", DefaultFinalScreenshotDelayMs);
                 var screenshotTimeoutMs = GetPositiveInt(payload, "screenshotTimeoutMs", DefaultScreenshotTimeoutMs);
                 var titleTimeoutMs = GetPositiveInt(payload, "titleTimeoutMs", DefaultTitleTimeoutMs);
-                var pvIntervalMs = GetNonNegativeInt(payload, "pvIntervalMs", 0);
-                var pvUrls = requestedPvUrls;
-                var pvTotal = Math.Max(GetPositiveInt(payload, "pv", 1), pvUrls.Count);
-                var lastUrl = pvUrls[0];
+                var pvIntervalMs = 1000;
+
+                var pvTotal = GetPositiveInt(task, "pv", 1);
+
                 WaitForNavigationAsyncResponse? lastLoadResponse = null;
                 var lastLoadTimedOut = false;
                 var completedPv = 0;
@@ -190,13 +177,10 @@ namespace CefClient
                 // OSR 模式每次 runBrowser 都是一次性浏览器；同一个 RunAsync 内的 pv 循环复用同一个浏览器上下文。
                 for (var pvIndex = 1; pvIndex <= pvTotal; pvIndex++)
                 {
-                    var pvUrl = pvIndex <= pvUrls.Count ? pvUrls[pvIndex - 1] : pvUrls[^1];
-                    lastUrl = pvUrl;
-
                     var navigationTask = browser.WaitForNavigationAsync(
                         TimeSpan.FromMilliseconds(loadTimeoutMs),
                         cancellationToken);
-                    browser.Load(pvUrl);
+                    browser.Load(url);
 
                     await Task.Delay(TimeSpan.FromMilliseconds(firstScreenshotDelayMs), cancellationToken);
 
@@ -220,12 +204,11 @@ namespace CefClient
 
                     var pvData = new JsonObject
                     {
-                        ["url"] = pvUrl,
+                        ["url"] = url,
                         ["cachePath"] = cachePath,
                         ["pvIndex"] = pvIndex,
                         ["pvTotal"] = pvTotal,
                         ["pvIntervalMs"] = pvIntervalMs,
-                        ["pvUrls"] = ToJsonArray(pvUrls),
                         ["loadCompleted"] = loadCompleted,
                         ["loadTimedOut"] = loadTimedOut,
                         ["loadErrorCode"] = loadResponse?.ErrorCode.ToString() ?? string.Empty,
@@ -261,12 +244,11 @@ namespace CefClient
                 var finalLoadCompleted = lastLoadResponse != null && !lastLoadTimedOut && lastLoadResponse.ErrorCode == CefErrorCode.None;
                 await PublishStatusAsync("dsp", true, finalLoadCompleted ? "page opened" : "页面加载较慢，已按超时继续", cancellationToken, new JsonObject
                 {
-                    ["url"] = lastUrl,
+                    ["url"] = url,
                     ["cachePath"] = cachePath,
                     ["pvTotal"] = pvTotal,
                     ["completedPv"] = completedPv,
                     ["pvIntervalMs"] = pvIntervalMs,
-                    ["pvUrls"] = ToJsonArray(pvUrls),
                     ["loadCompleted"] = finalLoadCompleted,
                     ["loadTimedOut"] = lastLoadTimedOut,
                     ["loadErrorCode"] = lastLoadResponse?.ErrorCode.ToString() ?? string.Empty,
@@ -282,11 +264,10 @@ namespace CefClient
                 var successData = new JsonObject
                 {
                     ["title"] = title ?? "",
-                    ["url"] = lastUrl,
+                    ["url"] = url,
                     ["pvTotal"] = pvTotal,
                     ["completedPv"] = completedPv,
                     ["pvIntervalMs"] = pvIntervalMs,
-                    ["pvUrls"] = ToJsonArray(pvUrls),
                     ["loadCompleted"] = finalLoadCompleted,
                     ["loadTimedOut"] = lastLoadTimedOut,
                     ["loadErrorCode"] = lastLoadResponse?.ErrorCode.ToString() ?? string.Empty,

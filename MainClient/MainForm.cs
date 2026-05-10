@@ -994,7 +994,7 @@ namespace MainClient
         private JsonObject BuildRunBrowserPayload(
             ConsumerTaskContext ctx,
             JsonNode rawTask,
-            object dev,
+            JsonNode dev,
             int consumerId,
             int uvIndex)
         {
@@ -1010,7 +1010,7 @@ namespace MainClient
                 ["userAgent"] = dev is JsonNode devToken ? devToken["ua"]?.GetValue<string>() ?? string.Empty : string.Empty,
                 ["isProxyMode"] = _appSettings.IsProxyMode,
                 ["proxy_server"] = ctx.ProxyServer ?? string.Empty,
-                ["rawTask"] = rawTask.ToString(),
+                ["task"] = rawTask.DeepClone(),
                 ["url"] = ctx.Url,
                 // OSR 端用这些短超时防止慢页面长期占住本次 UV，影响后续任务调度。
                 ["loadTimeoutMs"] = 8000,
