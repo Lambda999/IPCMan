@@ -4,6 +4,8 @@ namespace MainClient
 {
     public sealed class OsrScreenshotPreviewForm : Form
     {
+        private const int MaxDisplayedScreenshots = 120;
+
         private readonly FlowLayoutPanel _screenshotPanel = new()
         {
             AutoScroll = true,
@@ -21,20 +23,21 @@ namespace MainClient
             Controls.Add(_screenshotPanel);
         }
 
-        public void ShowScreenshot(string browserId, byte[] screenshotBytes)
+        public void ShowScreenshot(string browserId, string screenshotBase64)
         {
             if (IsDisposed || Disposing)
                 return;
 
             if (InvokeRequired)
             {
-                BeginInvoke(new Action(() => ShowScreenshot(browserId, screenshotBytes)));
+                BeginInvoke(new Action(() => ShowScreenshot(browserId, screenshotBase64)));
                 return;
             }
 
             Image screenshot;
             try
             {
+                var screenshotBytes = Convert.FromBase64String(screenshotBase64);
                 using var stream = new MemoryStream(screenshotBytes);
                 using var image = Image.FromStream(stream);
                 screenshot = new Bitmap(image);
@@ -54,6 +57,7 @@ namespace MainClient
             {
                 item = CreateScreenshotItem(browserId);
                 _screenshotPanel.Controls.Add(item);
+                TrimDisplayedScreenshots();
             }
 
             var title = item.Controls.OfType<Label>().First();
@@ -72,6 +76,30 @@ namespace MainClient
 
             if (WindowState == FormWindowState.Minimized)
                 WindowState = FormWindowState.Normal;
+        }
+
+
+        private void TrimDisplayedScreenshots()
+        {
+            while (_screenshotPanel.Controls.Count > MaxDisplayedScreenshots)
+            {
+                var oldest = _screenshotPanel.Controls[0];
+                _screenshotPanel.Controls.RemoveAt(0);
+                DisposeControlImages(oldest);
+                oldest.Dispose();
+            }
+        }
+
+        private static void DisposeControlImages(Control control)
+        {
+            foreach (var pictureBox in control.Controls.OfType<PictureBox>())
+            {
+                pictureBox.Image?.Dispose();
+                pictureBox.Image = null;
+            }
+
+            foreach (Control child in control.Controls)
+                DisposeControlImages(child);
         }
 
         private static string GetScreenshotItemName(string browserId)
@@ -115,13 +143,8 @@ namespace MainClient
         {
             if (disposing)
             {
-                foreach (var pictureBox in _screenshotPanel.Controls
-                    .OfType<Panel>()
-                    .SelectMany(panel => panel.Controls.OfType<PictureBox>()))
-                {
-                    pictureBox.Image?.Dispose();
-                    pictureBox.Image = null;
-                }
+                foreach (Control control in _screenshotPanel.Controls)
+                    DisposeControlImages(control);
             }
 
             base.Dispose(disposing);
