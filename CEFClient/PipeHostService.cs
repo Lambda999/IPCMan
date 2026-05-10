@@ -149,7 +149,17 @@ public sealed class PipeHostService : IAsyncDisposable
             BrowserRunResult result;
             try
             {
-                result = await _mainForm.RunBrowserAsync(browserId, payload, token);
+                result = await _mainForm.RunBrowserAsync(
+                    browserId,
+                    payload,
+                    token,
+                    (status, statusToken) => SendBrowserStatusAsync(
+                        status.BrowserId,
+                        status.Stage,
+                        status.Success,
+                        status.Message,
+                        statusToken,
+                        status.Data));
                 await SendLogAsync($"RunBrowserAsync finished. browserId={browserId}, success={result.Success}, msg={result.Message}", CancellationToken.None);
             }
             catch (Exception ex)

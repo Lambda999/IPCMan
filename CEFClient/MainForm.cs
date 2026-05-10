@@ -84,7 +84,8 @@ namespace CefClient
         public async Task<BrowserRunResult> RunBrowserAsync(
             string browserId,
             System.Text.Json.Nodes.JsonNode? payload,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            Func<BrowserRunStatus, CancellationToken, Task>? statusChanged = null)
         {
             if (!_slots.TryGetValue(browserId, out var slot))
             {
@@ -96,7 +97,7 @@ namespace CefClient
                 };
             }
 
-            return await slot.RunAsync(payload, cancellationToken);
+            return await slot.RunAsync(payload, cancellationToken, statusChanged);
         }
 
 

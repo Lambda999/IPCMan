@@ -12,6 +12,7 @@ using System.ComponentModel;
 using System.Data;
 using System.Diagnostics;
 using System.Drawing;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -215,31 +216,7 @@ namespace CefClient
             Task.Factory.StartNew(async () =>
             {
                 #region sleep
-                int sleep = 0;
-                if (task.ContainsKey("sleep") && !string.IsNullOrWhiteSpace(task["sleep"].ToString()))
-                {
-                    var text = task["sleep"].ToString();
-                    try
-                    {
-                        if (text.Contains("-"))
-                        {
-                            var values = text.Split('-');
-                            sleep = new Random().Next(Convert.ToInt32(values[0]), Convert.ToInt32(values[1]));
-                        }
-                        else
-                        {
-                            sleep = Convert.ToInt32(sleep);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.WriteLine(ex.Message);
-                    }
-                }
-                else
-                {
-                    sleep = new Random().Next(10, 15);
-                }
+                var sleepDelayMs = GetSleepDelayMilliseconds(task, Random.Shared.Next(10, 15) * 1000);
                 #endregion
 
 
@@ -608,7 +585,7 @@ namespace CefClient
                     {
                         for (int i = 1; i < pv; i++)
                         {
-                            await Task.Delay(sleep * 1000);
+                            await Task.Delay(sleepDelayMs);
                             for (int ii = 0; ii < urls.Count(); ii++)
                             {
                                 try
@@ -626,7 +603,7 @@ namespace CefClient
                             }
                         }
                     }
-                    await TaskDelay(sleep, "关闭浏览器");
+                    await TaskDelay(sleepDelayMs, "关闭浏览器");
                 }
                 catch (Exception ex)
                 {
@@ -656,18 +633,72 @@ namespace CefClient
         {
             base.SetVisibleCore(value);
         }
-        private async Task TaskDelay(int interval, string text = "结束")
+
+        private static int GetSleepDelayMilliseconds(JsonObject task, int defaultValue = 0)
         {
-            while (interval-- > 1)
+            if (!task.ContainsKey("sleep"))
+                return defaultValue;
+
+            var sleepText = GetNodeText(task["sleep"]);
+            if (string.IsNullOrWhiteSpace(sleepText))
+                return defaultValue;
+
+            int seconds;
+            var rangeParts = sleepText.Split('-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (rangeParts.Length == 2 &&
+                int.TryParse(rangeParts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var minSeconds) &&
+                int.TryParse(rangeParts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var maxSeconds))
             {
-                CefSharpHelper.SendMouseWheelEvent(this.chromiumWebBrowser.GetBrowserHost(), 50, 100, 0, -new Random().Next(350, 850));
-                await Task.Delay(new Random().Next(300, 500));
-                this.BeginInvoke(new MethodInvoker(() =>
+                if (maxSeconds < minSeconds)
                 {
-                    this.Text = $"{caption},{interval}秒后{text}.";
-                }));
-                await Task.Delay(1000);
+                    (minSeconds, maxSeconds) = (maxSeconds, minSeconds);
+                }
+
+                if (maxSeconds <= 0)
+                    return 0;
+
+                minSeconds = Math.Max(0, minSeconds);
+                var exclusiveMaxSeconds = maxSeconds == int.MaxValue ? int.MaxValue : maxSeconds + 1;
+                seconds = Random.Shared.Next(minSeconds, exclusiveMaxSeconds);
             }
+            else if (!int.TryParse(sleepText, NumberStyles.Integer, CultureInfo.InvariantCulture, out seconds))
+            {
+                return defaultValue;
+            }
+
+            if (seconds <= 0)
+                return 0;
+
+            return seconds > int.MaxValue / 1000 ? int.MaxValue : seconds * 1000;
+        }
+
+        private static string GetNodeText(JsonNode? node)
+        {
+            if (node == null)
+                return string.Empty;
+
+            try
+            {
+                return node.GetValue<string>() ?? string.Empty;
+            }
+            catch
+            {
+                return node.ToString();
+            }
+        }
+
+        private async Task TaskDelay(int delayMilliseconds, string text = "结束")
+        {
+            if (delayMilliseconds <= 0)
+                return;
+
+            var remainingSeconds = (int)Math.Ceiling(delayMilliseconds / 1000d);
+            this.BeginInvoke(new MethodInvoker(() =>
+            {
+                this.Text = $"{caption},{remainingSeconds}秒后{text}.";
+            }));
+
+            await Task.Delay(delayMilliseconds);
         }
 
 
