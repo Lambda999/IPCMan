@@ -55,6 +55,7 @@ namespace MainClient
             {
                 item = CreateScreenshotItem(consumerId);
                 _screenshotPanel.Controls.Add(item);
+                SortScreenshotItemsByConsumerId();
             }
 
             var title = item.Controls.OfType<Label>().First();
@@ -73,6 +74,42 @@ namespace MainClient
 
             if (WindowState == FormWindowState.Minimized)
                 WindowState = FormWindowState.Normal;
+        }
+
+        private void SortScreenshotItemsByConsumerId()
+        {
+            var sortedItems = _screenshotPanel.Controls
+                .OfType<Panel>()
+                .OrderBy(GetConsumerSortBucket)
+                .ThenBy(GetConsumerSortNumber)
+                .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            for (var i = 0; i < sortedItems.Count; i++)
+                _screenshotPanel.Controls.SetChildIndex(sortedItems[i], i);
+        }
+
+        private static int GetConsumerSortBucket(Control control)
+        {
+            return int.TryParse(GetConsumerIdFromControl(control), out _) ? 0 : 1;
+        }
+
+        private static int GetConsumerSortNumber(Control control)
+        {
+            return int.TryParse(GetConsumerIdFromControl(control), out var consumerId)
+                ? consumerId
+                : int.MaxValue;
+        }
+
+        private static string GetConsumerIdFromControl(Control control)
+        {
+            if (control.Tag is string consumerId)
+                return consumerId;
+
+            const string prefix = "screenshot_consumer_";
+            return control.Name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+                ? control.Name[prefix.Length..]
+                : control.Name;
         }
 
         private static void DisposeControlImages(Control control)
@@ -97,6 +134,7 @@ namespace MainClient
             var item = new Panel
             {
                 Name = GetScreenshotItemName(consumerId),
+                Tag = consumerId,
                 Width = 420,
                 Height = 920,
                 Margin = new Padding(4),
