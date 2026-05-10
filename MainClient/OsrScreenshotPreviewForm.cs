@@ -4,7 +4,7 @@ namespace MainClient
 {
     public sealed class OsrScreenshotPreviewForm : Form
     {
-        private const int MaxDisplayedScreenshots = 120;
+        private const int MaxDisplayedScreenshots = 32;
 
         private readonly FlowLayoutPanel _screenshotPanel = new()
         {
