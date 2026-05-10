@@ -89,17 +89,19 @@ namespace CefClient
                     };
                 }
 
-                var userAgent = GetString(payload, "userAgent");
-                if (string.IsNullOrWhiteSpace(userAgent))
-                    userAgent = GetString(payload?["device"], "ua");
-
-                var navigationHeaders = BuildNavigationHeaders(userAgent, referer);
-                var ok = await CefHelper.LoadUrlAndWaitAsync(
-                    Browser,
-                    url,
-                    TimeSpan.FromSeconds(30),
-                    cancellationToken,
-                    browser => LoadUrl(browser, url, "GET", navigationHeaders));
+                var refererHeaders = BuildRefererHeaders(referer);
+                var ok = refererHeaders != null
+                    ? await CefHelper.LoadUrlAndWaitAsync(
+                        Browser,
+                        url,
+                        TimeSpan.FromSeconds(30),
+                        cancellationToken,
+                        browser => LoadUrl(browser, url, "GET", refererHeaders))
+                    : await CefHelper.LoadUrlAndWaitAsync(
+                        Browser,
+                        url,
+                        TimeSpan.FromSeconds(30),
+                        cancellationToken);
 
                 if (!ok)
                 {
@@ -167,18 +169,15 @@ namespace CefClient
             return data;
         }
 
-        private static WebHeaderCollection? BuildNavigationHeaders(string? userAgent, string? referer)
+        private static WebHeaderCollection? BuildRefererHeaders(string? referer)
         {
-            if (string.IsNullOrWhiteSpace(userAgent) && string.IsNullOrWhiteSpace(referer))
+            if (string.IsNullOrWhiteSpace(referer))
                 return null;
 
-            var headers = new WebHeaderCollection();
-            if (!string.IsNullOrWhiteSpace(userAgent))
-                headers[HttpRequestHeader.UserAgent] = userAgent;
-            if (!string.IsNullOrWhiteSpace(referer))
-                headers[HttpRequestHeader.Referer] = referer;
-
-            return headers;
+            return new WebHeaderCollection
+            {
+                [HttpRequestHeader.Referer] = referer
+            };
         }
 
         public static void LoadUrl(

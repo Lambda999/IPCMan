@@ -156,7 +156,7 @@ namespace CefClient
 
                 await devToolsClient.Emulation.SetUserAgentOverrideAsync(userAgent: ua, platform: platform);
 
-                var navigationHeaders = BuildNavigationHeaders(ua, referer);
+                var refererHeaders = BuildRefererHeaders(referer);
 
                 await devToolsClient.Emulation.SetDeviceMetricsOverrideAsync(
                     width: devProfile.CssWidth,
@@ -189,7 +189,14 @@ namespace CefClient
                     var navigationTask = browser.WaitForNavigationAsync(
                         TimeSpan.FromMilliseconds(loadTimeoutMs),
                         cancellationToken);
-                    LoadUrl(browser, url, "GET", navigationHeaders);
+                    if (refererHeaders != null)
+                    {
+                        LoadUrl(browser, url, "GET", refererHeaders);
+                    }
+                    else
+                    {
+                        browser.Load(url);
+                    }
 
                     await Task.Delay(TimeSpan.FromMilliseconds(firstScreenshotDelayMs), cancellationToken);
 
@@ -362,18 +369,15 @@ namespace CefClient
 
 
 
-        private static WebHeaderCollection? BuildNavigationHeaders(string? userAgent, string? referer)
+        private static WebHeaderCollection? BuildRefererHeaders(string? referer)
         {
-            if (string.IsNullOrWhiteSpace(userAgent) && string.IsNullOrWhiteSpace(referer))
+            if (string.IsNullOrWhiteSpace(referer))
                 return null;
 
-            var headers = new WebHeaderCollection();
-            if (!string.IsNullOrWhiteSpace(userAgent))
-                headers[HttpRequestHeader.UserAgent] = userAgent;
-            if (!string.IsNullOrWhiteSpace(referer))
-                headers[HttpRequestHeader.Referer] = referer;
-
-            return headers;
+            return new WebHeaderCollection
+            {
+                [HttpRequestHeader.Referer] = referer
+            };
         }
 
         public static void LoadUrl(
