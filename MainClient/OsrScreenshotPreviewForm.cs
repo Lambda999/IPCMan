@@ -4,8 +4,6 @@ namespace MainClient
 {
     public sealed class OsrScreenshotPreviewForm : Form
     {
-        private const int MaxDisplayedScreenshots = 32;
-
         private readonly FlowLayoutPanel _screenshotPanel = new()
         {
             AutoScroll = true,
@@ -23,14 +21,14 @@ namespace MainClient
             Controls.Add(_screenshotPanel);
         }
 
-        public void ShowScreenshot(string browserId, string screenshotBase64)
+        public void ShowScreenshot(string consumerId, string browserId, string screenshotBase64)
         {
             if (IsDisposed || Disposing)
                 return;
 
             if (InvokeRequired)
             {
-                BeginInvoke(new Action(() => ShowScreenshot(browserId, screenshotBase64)));
+                BeginInvoke(new Action(() => ShowScreenshot(consumerId, browserId, screenshotBase64)));
                 return;
             }
 
@@ -51,17 +49,17 @@ namespace MainClient
 
             var item = _screenshotPanel.Controls
                 .OfType<Panel>()
-                .FirstOrDefault(x => string.Equals(x.Name, GetScreenshotItemName(browserId), StringComparison.OrdinalIgnoreCase));
+                .FirstOrDefault(x => string.Equals(x.Name, GetScreenshotItemName(consumerId), StringComparison.OrdinalIgnoreCase));
 
             if (item == null)
             {
-                item = CreateScreenshotItem(browserId);
+                item = CreateScreenshotItem(consumerId);
                 _screenshotPanel.Controls.Add(item);
-                TrimDisplayedScreenshots();
+                SortScreenshotItemsByConsumerId();
             }
 
             var title = item.Controls.OfType<Label>().First();
-            title.Text = $"{browserId}  {DateTime.Now:HH:mm:ss}";
+            title.Text = $"Consumer {consumerId}  {browserId}  {DateTime.Now:HH:mm:ss}";
 
             var pictureBox = item.Controls.OfType<PictureBox>().First();
             var oldImage = pictureBox.Image;
@@ -78,16 +76,40 @@ namespace MainClient
                 WindowState = FormWindowState.Normal;
         }
 
-
-        private void TrimDisplayedScreenshots()
+        private void SortScreenshotItemsByConsumerId()
         {
-            while (_screenshotPanel.Controls.Count > MaxDisplayedScreenshots)
-            {
-                var oldest = _screenshotPanel.Controls[0];
-                _screenshotPanel.Controls.RemoveAt(0);
-                DisposeControlImages(oldest);
-                oldest.Dispose();
-            }
+            var sortedItems = _screenshotPanel.Controls
+                .OfType<Panel>()
+                .OrderBy(GetConsumerSortBucket)
+                .ThenBy(GetConsumerSortNumber)
+                .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            for (var i = 0; i < sortedItems.Count; i++)
+                _screenshotPanel.Controls.SetChildIndex(sortedItems[i], i);
+        }
+
+        private static int GetConsumerSortBucket(Control control)
+        {
+            return int.TryParse(GetConsumerIdFromControl(control), out _) ? 0 : 1;
+        }
+
+        private static int GetConsumerSortNumber(Control control)
+        {
+            return int.TryParse(GetConsumerIdFromControl(control), out var consumerId)
+                ? consumerId
+                : int.MaxValue;
+        }
+
+        private static string GetConsumerIdFromControl(Control control)
+        {
+            if (control.Tag is string consumerId)
+                return consumerId;
+
+            const string prefix = "screenshot_consumer_";
+            return control.Name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+                ? control.Name[prefix.Length..]
+                : control.Name;
         }
 
         private static void DisposeControlImages(Control control)
@@ -102,16 +124,17 @@ namespace MainClient
                 DisposeControlImages(child);
         }
 
-        private static string GetScreenshotItemName(string browserId)
+        private static string GetScreenshotItemName(string consumerId)
         {
-            return $"screenshot_{browserId}";
+            return $"screenshot_consumer_{consumerId}";
         }
 
-        private static Panel CreateScreenshotItem(string browserId)
+        private static Panel CreateScreenshotItem(string consumerId)
         {
             var item = new Panel
             {
-                Name = GetScreenshotItemName(browserId),
+                Name = GetScreenshotItemName(consumerId),
+                Tag = consumerId,
                 Width = 420,
                 Height = 920,
                 Margin = new Padding(4),
@@ -123,7 +146,7 @@ namespace MainClient
                 AutoEllipsis = true,
                 Dock = DockStyle.Top,
                 Height = 28,
-                Text = browserId,
+                Text = $"Consumer {consumerId}",
                 TextAlign = ContentAlignment.MiddleCenter
             };
 
