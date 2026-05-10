@@ -1,4 +1,4 @@
-﻿using CefClient.Common;
+using CefClient.Common;
 using CefSharp;
 
 
@@ -16,6 +16,12 @@ namespace CefClient
             var consumerId = args
             .FirstOrDefault(x => x.StartsWith("--consumer-id=", StringComparison.OrdinalIgnoreCase))
             ?.Substring("--consumer-id=".Length);
+
+            if (string.IsNullOrWhiteSpace(pipeName))
+            {
+                // OffScreen 项目只作为管道子进程运行；未提供 pipe-name 时不创建任何窗体，直接退出。
+                return 0;
+            }
 
             if (!string.IsNullOrWhiteSpace(consumerId))
             {
@@ -124,21 +130,13 @@ namespace CefClient
                 }
             };
 
-            var mainForm = new MainForm();
+            // 由主进程调度。OSR 子进程不再创建本地预览窗体，截图通过管道回传给 MainClient。
+            var browserHost = new OffScreenBrowserHost();
+            var pipeHost = new PipeHostService(pipeName, browserHost);
+            var appContext = new CefClientAppContext(pipeHost);
 
-            // 带管道参数：由主进程调度
-            if (!string.IsNullOrWhiteSpace(pipeName))
-            {
-                var pipeHost = new PipeHostService(pipeName, mainForm);
-                var appContext = new CefClientAppContext(mainForm, pipeHost);
-
-                appContext.Start();
-                Application.Run(appContext);
-                return 0;
-            }
-
-            // 不带管道参数：本地直接调试运行
-            Application.Run(mainForm);
+            appContext.Start();
+            Application.Run(appContext);
             return 0;
         }
     }

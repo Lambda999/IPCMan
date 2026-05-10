@@ -24,7 +24,19 @@ namespace MainClient
         private readonly AppSettings _appSettings;
         private readonly AdeHelper _adeHelper;
         private readonly IpHelper _ipHelper;
+        private const int MaxOsrScreenshotQueueLength = 200;
+        private const int OsrScreenshotsPerTick = 2;
+        private const int OsrScreenshotQueueIntervalMs = 100;
+
         private readonly ProxyTester _ipTester;
+        private readonly ConcurrentQueue<OsrScreenshotPreviewItem> _osrScreenshotQueue = new();
+        private readonly System.Windows.Forms.Timer _osrScreenshotTimer;
+        private OsrScreenshotPreviewForm? _osrScreenshotPreviewForm;
+        private int _osrScreenshotQueueCount;
+        private int _osrScreenshotTimerStartPending;
+        private long _osrScreenshotDroppedCount;
+
+        private readonly record struct OsrScreenshotPreviewItem(string BrowserId, string ScreenshotBase64);
 
 
 
@@ -208,6 +220,11 @@ namespace MainClient
             this._appSettings = appSettings;
             this._logger = logger;
             this._httpClientFactory = httpClientFactory;
+
+            components ??= new System.ComponentModel.Container();
+            _osrScreenshotTimer = new System.Windows.Forms.Timer(components);
+            _osrScreenshotTimer.Interval = OsrScreenshotQueueIntervalMs;
+            _osrScreenshotTimer.Tick += (_, _) => DrainOsrScreenshotQueue();
 
             LoadAppSetting();
             #region 数据初始化
@@ -427,6 +444,120 @@ namespace MainClient
         }
 
 
+        private Task ShowOsrScreenshotAsync(PipeEnvelope screenshot)
+        {
+            if (_appSettings.IsHiddenMode || !_appSettings.IsOsrMode)
+                return Task.CompletedTask;
+
+            var browserId = screenshot.BrowserId;
+            var base64 = screenshot.Data?["base64"]?.GetValue<string>();
+            if (string.IsNullOrWhiteSpace(browserId) || string.IsNullOrWhiteSpace(base64))
+                return Task.CompletedTask;
+
+            if (!TryEnqueueOsrScreenshot(browserId, base64))
+            {
+                var dropped = Interlocked.Increment(ref _osrScreenshotDroppedCount);
+                if (dropped % 100 == 1)
+                {
+                    _logger.LogDebug(
+                        "OSR screenshot preview queue full, drop newest. dropped={Dropped}, maxQueue={MaxQueue}",
+                        dropped,
+                        MaxOsrScreenshotQueueLength);
+                }
+
+                return Task.CompletedTask;
+            }
+
+            ScheduleOsrScreenshotDrain();
+            return Task.CompletedTask;
+        }
+
+        private bool TryEnqueueOsrScreenshot(string browserId, string screenshotBase64)
+        {
+            while (true)
+            {
+                var currentCount = Volatile.Read(ref _osrScreenshotQueueCount);
+                if (currentCount >= MaxOsrScreenshotQueueLength)
+                    return false;
+
+                if (Interlocked.CompareExchange(
+                    ref _osrScreenshotQueueCount,
+                    currentCount + 1,
+                    currentCount) == currentCount)
+                {
+                    _osrScreenshotQueue.Enqueue(new OsrScreenshotPreviewItem(browserId, screenshotBase64));
+                    return true;
+                }
+            }
+        }
+
+        private void ScheduleOsrScreenshotDrain()
+        {
+            if (IsDisposed || Disposing)
+                return;
+
+            if (Interlocked.Exchange(ref _osrScreenshotTimerStartPending, 1) == 1)
+                return;
+
+            void StartTimerOnUiThread()
+            {
+                Interlocked.Exchange(ref _osrScreenshotTimerStartPending, 0);
+
+                if (IsDisposed || Disposing || Volatile.Read(ref _osrScreenshotQueueCount) <= 0)
+                    return;
+
+                if (!_osrScreenshotTimer.Enabled)
+                    _osrScreenshotTimer.Start();
+            }
+
+            try
+            {
+                if (InvokeRequired)
+                    BeginInvoke((Action)StartTimerOnUiThread);
+                else
+                    StartTimerOnUiThread();
+            }
+            catch
+            {
+                Interlocked.Exchange(ref _osrScreenshotTimerStartPending, 0);
+            }
+        }
+
+        private void DrainOsrScreenshotQueue()
+        {
+            if (_appSettings.IsHiddenMode || !_appSettings.IsOsrMode)
+            {
+                ClearOsrScreenshotQueue();
+                _osrScreenshotTimer.Stop();
+                return;
+            }
+
+            if (_osrScreenshotPreviewForm == null || _osrScreenshotPreviewForm.IsDisposed)
+            {
+                _osrScreenshotPreviewForm = new OsrScreenshotPreviewForm();
+                _osrScreenshotPreviewForm.FormClosed += (_, _) => _osrScreenshotPreviewForm = null;
+            }
+
+            for (var i = 0; i < OsrScreenshotsPerTick; i++)
+            {
+                if (!_osrScreenshotQueue.TryDequeue(out var item))
+                    break;
+
+                Interlocked.Decrement(ref _osrScreenshotQueueCount);
+                _osrScreenshotPreviewForm.ShowScreenshot(item.BrowserId, item.ScreenshotBase64);
+            }
+
+            if (Volatile.Read(ref _osrScreenshotQueueCount) <= 0)
+                _osrScreenshotTimer.Stop();
+        }
+
+        private void ClearOsrScreenshotQueue()
+        {
+            while (_osrScreenshotQueue.TryDequeue(out _))
+                Interlocked.Decrement(ref _osrScreenshotQueueCount);
+        }
+
+
         private async Task<bool> ExecuteTaskByCefClientAsync(
            ConsumerTaskContext ctx,
            JsonNode rawTask,
@@ -459,6 +590,19 @@ namespace MainClient
                 _logger.LogInformation("CefClient[{TaskId}] {Message}", ctx.TaskId, message);
                 return Task.CompletedTask;
             };
+
+
+            session.OnBrowserScreenshot += screenshot =>
+            {
+                if (!string.IsNullOrWhiteSpace(screenshot.TaskId) &&
+                    !string.Equals(screenshot.TaskId, ctx.UniqueId, StringComparison.OrdinalIgnoreCase))
+                {
+                    return Task.CompletedTask;
+                }
+
+                return ShowOsrScreenshotAsync(screenshot);
+            };
+
             session.OnBrowserStatus += status =>
             {
                 if (!string.IsNullOrWhiteSpace(status.TaskId) &&
