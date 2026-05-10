@@ -24,19 +24,23 @@ namespace MainClient
         private readonly AppSettings _appSettings;
         private readonly AdeHelper _adeHelper;
         private readonly IpHelper _ipHelper;
-        private const int MaxOsrScreenshotQueueLength = 200;
         private const int OsrScreenshotsPerTick = 2;
         private const int OsrScreenshotQueueIntervalMs = 100;
 
         private readonly ProxyTester _ipTester;
-        private readonly ConcurrentQueue<OsrScreenshotPreviewItem> _osrScreenshotQueue = new();
+        private readonly ConcurrentQueue<string> _osrScreenshotQueue = new();
+        private readonly ConcurrentDictionary<string, OsrScreenshotPreviewItem> _osrPendingScreenshots = new(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentDictionary<string, byte> _osrQueuedScreenshotKeys = new(StringComparer.OrdinalIgnoreCase);
         private readonly System.Windows.Forms.Timer _osrScreenshotTimer;
         private OsrScreenshotPreviewForm? _osrScreenshotPreviewForm;
         private int _osrScreenshotQueueCount;
         private int _osrScreenshotTimerStartPending;
-        private long _osrScreenshotDroppedCount;
 
-        private readonly record struct OsrScreenshotPreviewItem(string BrowserId, string ScreenshotBase64);
+        private readonly record struct OsrScreenshotPreviewItem(
+            string PreviewKey,
+            string ConsumerId,
+            string BrowserId,
+            string ScreenshotBase64);
 
 
 
@@ -444,7 +448,7 @@ namespace MainClient
         }
 
 
-        private Task ShowOsrScreenshotAsync(PipeEnvelope screenshot)
+        private Task ShowOsrScreenshotAsync(PipeEnvelope screenshot, int consumerId)
         {
             if (_appSettings.IsHiddenMode || !_appSettings.IsOsrMode)
                 return Task.CompletedTask;
@@ -454,41 +458,27 @@ namespace MainClient
             if (string.IsNullOrWhiteSpace(browserId) || string.IsNullOrWhiteSpace(base64))
                 return Task.CompletedTask;
 
-            if (!TryEnqueueOsrScreenshot(browserId, base64))
-            {
-                var dropped = Interlocked.Increment(ref _osrScreenshotDroppedCount);
-                if (dropped % 100 == 1)
-                {
-                    _logger.LogDebug(
-                        "OSR screenshot preview queue full, drop newest. dropped={Dropped}, maxQueue={MaxQueue}",
-                        dropped,
-                        MaxOsrScreenshotQueueLength);
-                }
-
-                return Task.CompletedTask;
-            }
+            var consumerIdText = consumerId.ToString();
+            var previewKey = $"consumer_{consumerIdText}";
+            EnqueueOrUpdateOsrScreenshot(new OsrScreenshotPreviewItem(
+                previewKey,
+                consumerIdText,
+                browserId,
+                base64));
 
             ScheduleOsrScreenshotDrain();
             return Task.CompletedTask;
         }
 
-        private bool TryEnqueueOsrScreenshot(string browserId, string screenshotBase64)
+        private void EnqueueOrUpdateOsrScreenshot(OsrScreenshotPreviewItem item)
         {
-            while (true)
-            {
-                var currentCount = Volatile.Read(ref _osrScreenshotQueueCount);
-                if (currentCount >= MaxOsrScreenshotQueueLength)
-                    return false;
+            _osrPendingScreenshots.AddOrUpdate(item.PreviewKey, item, (_, _) => item);
 
-                if (Interlocked.CompareExchange(
-                    ref _osrScreenshotQueueCount,
-                    currentCount + 1,
-                    currentCount) == currentCount)
-                {
-                    _osrScreenshotQueue.Enqueue(new OsrScreenshotPreviewItem(browserId, screenshotBase64));
-                    return true;
-                }
-            }
+            if (!_osrQueuedScreenshotKeys.TryAdd(item.PreviewKey, 0))
+                return;
+
+            _osrScreenshotQueue.Enqueue(item.PreviewKey);
+            Interlocked.Increment(ref _osrScreenshotQueueCount);
         }
 
         private void ScheduleOsrScreenshotDrain()
@@ -540,11 +530,16 @@ namespace MainClient
 
             for (var i = 0; i < OsrScreenshotsPerTick; i++)
             {
-                if (!_osrScreenshotQueue.TryDequeue(out var item))
+                if (!_osrScreenshotQueue.TryDequeue(out var previewKey))
                     break;
 
+                _osrQueuedScreenshotKeys.TryRemove(previewKey, out _);
                 Interlocked.Decrement(ref _osrScreenshotQueueCount);
-                _osrScreenshotPreviewForm.ShowScreenshot(item.BrowserId, item.ScreenshotBase64);
+
+                if (!_osrPendingScreenshots.TryRemove(previewKey, out var item))
+                    continue;
+
+                _osrScreenshotPreviewForm.ShowScreenshot(item.ConsumerId, item.BrowserId, item.ScreenshotBase64);
             }
 
             if (Volatile.Read(ref _osrScreenshotQueueCount) <= 0)
@@ -554,7 +549,12 @@ namespace MainClient
         private void ClearOsrScreenshotQueue()
         {
             while (_osrScreenshotQueue.TryDequeue(out _))
-                Interlocked.Decrement(ref _osrScreenshotQueueCount);
+            {
+            }
+
+            Interlocked.Exchange(ref _osrScreenshotQueueCount, 0);
+            _osrPendingScreenshots.Clear();
+            _osrQueuedScreenshotKeys.Clear();
         }
 
 
@@ -600,7 +600,7 @@ namespace MainClient
                     return Task.CompletedTask;
                 }
 
-                return ShowOsrScreenshotAsync(screenshot);
+                return ShowOsrScreenshotAsync(screenshot, consumerId);
             };
 
             session.OnBrowserStatus += status =>
