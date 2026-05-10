@@ -10,7 +10,8 @@ public static class CefHelper
         ChromiumWebBrowser browser,
         string url,
         TimeSpan timeout,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Action<ChromiumWebBrowser>? navigate = null)
     {
         var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -67,7 +68,15 @@ public static class CefHelper
         });
 
         // 关键：订阅完事件后再导航，避免错过事件
-        browser.Load(url);
+        try
+        {
+            (navigate ?? (b => b.Load(url)))(browser);
+        }
+        catch (Exception ex)
+        {
+            Cleanup();
+            tcs.TrySetException(ex);
+        }
 
         return tcs.Task;
     }
