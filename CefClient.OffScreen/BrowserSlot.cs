@@ -79,10 +79,11 @@ namespace CefClient
             var taskId = payload?["taskId"]?.ToString() ?? BrowserId;
             var consumerId = payload?["consumerId"]?.ToString() ?? "unknown";
             var uvIndex = payload?["uvIndex"]?.ToString() ?? BrowserId;
+            var requestedPvUrls = BuildPvUrls(payload, url);
 
             try
             {
-                if (string.IsNullOrWhiteSpace(url))
+                if (requestedPvUrls.Count == 0)
                 {
                     await PublishStatusAsync("error", false, "url 不能为空", cancellationToken, new JsonObject
                     {
@@ -178,61 +179,98 @@ namespace CefClient
                 var finalScreenshotDelayMs = GetNonNegativeInt(payload, "finalScreenshotDelayMs", DefaultFinalScreenshotDelayMs);
                 var screenshotTimeoutMs = GetPositiveInt(payload, "screenshotTimeoutMs", DefaultScreenshotTimeoutMs);
                 var titleTimeoutMs = GetPositiveInt(payload, "titleTimeoutMs", DefaultTitleTimeoutMs);
+                var pvIntervalMs = GetNonNegativeInt(payload, "pvIntervalMs", 0);
+                var pvUrls = requestedPvUrls;
+                var pvTotal = Math.Max(GetPositiveInt(payload, "pv", 1), pvUrls.Count);
+                var lastUrl = pvUrls[0];
+                WaitForNavigationAsyncResponse? lastLoadResponse = null;
+                var lastLoadTimedOut = false;
+                var completedPv = 0;
 
-                var navigationTask = browser.WaitForNavigationAsync(
-                    TimeSpan.FromMilliseconds(loadTimeoutMs),
-                    cancellationToken);
-                browser.Load(url);
-
-                // OSR 模式每次 runBrowser 都是一次性浏览：创建、浏览、截图、返回后由 using 自动释放。
-                await Task.Delay(TimeSpan.FromMilliseconds(firstScreenshotDelayMs), cancellationToken);
-
-                WaitForNavigationAsyncResponse? loadResponse = null;
-                var loadTimedOut = false;
-                try
+                // OSR 模式每次 runBrowser 都是一次性浏览器；同一个 RunAsync 内的 pv 循环复用同一个浏览器上下文。
+                for (var pvIndex = 1; pvIndex <= pvTotal; pvIndex++)
                 {
-                    loadResponse = await navigationTask;
-                }
-                catch (TimeoutException)
-                {
-                    loadTimedOut = true;
-                    TryStopBrowser(browser);
-                }
+                    var pvUrl = pvIndex <= pvUrls.Count ? pvUrls[pvIndex - 1] : pvUrls[^1];
+                    lastUrl = pvUrl;
 
-                var loadFailed = loadResponse != null && loadResponse.ErrorCode != CefErrorCode.None;
-                if (loadFailed)
-                {
-                    var failedData = new JsonObject
+                    var navigationTask = browser.WaitForNavigationAsync(
+                        TimeSpan.FromMilliseconds(loadTimeoutMs),
+                        cancellationToken);
+                    browser.Load(pvUrl);
+
+                    await Task.Delay(TimeSpan.FromMilliseconds(firstScreenshotDelayMs), cancellationToken);
+
+                    WaitForNavigationAsyncResponse? loadResponse = null;
+                    var loadTimedOut = false;
+                    try
                     {
-                        ["url"] = url,
+                        loadResponse = await navigationTask;
+                    }
+                    catch (TimeoutException)
+                    {
+                        loadTimedOut = true;
+                        TryStopBrowser(browser);
+                    }
+
+                    var loadFailed = loadResponse != null && loadResponse.ErrorCode != CefErrorCode.None;
+                    var loadCompleted = loadResponse != null && !loadTimedOut && loadResponse.ErrorCode == CefErrorCode.None;
+                    lastLoadResponse = loadResponse;
+                    lastLoadTimedOut = loadTimedOut;
+                    completedPv = pvIndex;
+
+                    var pvData = new JsonObject
+                    {
+                        ["url"] = pvUrl,
                         ["cachePath"] = cachePath,
+                        ["pvIndex"] = pvIndex,
+                        ["pvTotal"] = pvTotal,
+                        ["pvIntervalMs"] = pvIntervalMs,
+                        ["pvUrls"] = ToJsonArray(pvUrls),
+                        ["loadCompleted"] = loadCompleted,
+                        ["loadTimedOut"] = loadTimedOut,
                         ["loadErrorCode"] = loadResponse?.ErrorCode.ToString() ?? string.Empty,
                         ["httpStatusCode"] = loadResponse?.HttpStatusCode ?? -1,
-                        ["screenshotShown"] = false,
-                        ["osrOneShot"] = true,
-                        ["disposedByRunAsync"] = true
+                        ["loadTimeoutMs"] = loadTimeoutMs
                     };
 
-                    await PublishStatusAsync("error", false, "页面加载失败", cancellationToken, failedData);
-
-                    return new BrowserRunResult
+                    if (loadFailed)
                     {
-                        BrowserId = BrowserId,
-                        Success = false,
-                        Message = "页面加载失败",
-                        Data = failedData
-                    };
+                        pvData["screenshotShown"] = false;
+                        pvData["osrOneShot"] = true;
+                        pvData["disposedByRunAsync"] = true;
+
+                        await PublishStatusAsync("error", false, $"第 {pvIndex}/{pvTotal} 次 PV 页面加载失败", cancellationToken, pvData);
+
+                        return new BrowserRunResult
+                        {
+                            BrowserId = BrowserId,
+                            Success = false,
+                            Message = "页面加载失败",
+                            Data = pvData
+                        };
+                    }
+
+                    await PublishStatusAsync("pv", true, loadCompleted ? $"pv {pvIndex}/{pvTotal} opened" : $"pv {pvIndex}/{pvTotal} 页面加载较慢，已按超时继续", cancellationToken, pvData);
+
+                    if (pvIndex < pvTotal && pvIntervalMs > 0)
+                    {
+                        await Task.Delay(TimeSpan.FromMilliseconds(pvIntervalMs), cancellationToken);
+                    }
                 }
 
-                var loadCompleted = loadResponse != null && !loadTimedOut && loadResponse.ErrorCode == CefErrorCode.None;
-                await PublishStatusAsync("dsp", true, loadCompleted ? "page opened" : "页面加载较慢，已按超时继续", cancellationToken, new JsonObject
+                var finalLoadCompleted = lastLoadResponse != null && !lastLoadTimedOut && lastLoadResponse.ErrorCode == CefErrorCode.None;
+                await PublishStatusAsync("dsp", true, finalLoadCompleted ? "page opened" : "页面加载较慢，已按超时继续", cancellationToken, new JsonObject
                 {
-                    ["url"] = url,
+                    ["url"] = lastUrl,
                     ["cachePath"] = cachePath,
-                    ["loadCompleted"] = loadCompleted,
-                    ["loadTimedOut"] = loadTimedOut,
-                    ["loadErrorCode"] = loadResponse?.ErrorCode.ToString() ?? string.Empty,
-                    ["httpStatusCode"] = loadResponse?.HttpStatusCode ?? -1,
+                    ["pvTotal"] = pvTotal,
+                    ["completedPv"] = completedPv,
+                    ["pvIntervalMs"] = pvIntervalMs,
+                    ["pvUrls"] = ToJsonArray(pvUrls),
+                    ["loadCompleted"] = finalLoadCompleted,
+                    ["loadTimedOut"] = lastLoadTimedOut,
+                    ["loadErrorCode"] = lastLoadResponse?.ErrorCode.ToString() ?? string.Empty,
+                    ["httpStatusCode"] = lastLoadResponse?.HttpStatusCode ?? -1,
                     ["loadTimeoutMs"] = loadTimeoutMs
                 });
 
@@ -244,11 +282,15 @@ namespace CefClient
                 var successData = new JsonObject
                 {
                     ["title"] = title ?? "",
-                    ["url"] = url,
-                    ["loadCompleted"] = loadCompleted,
-                    ["loadTimedOut"] = loadTimedOut,
-                    ["loadErrorCode"] = loadResponse?.ErrorCode.ToString() ?? string.Empty,
-                    ["httpStatusCode"] = loadResponse?.HttpStatusCode ?? -1,
+                    ["url"] = lastUrl,
+                    ["pvTotal"] = pvTotal,
+                    ["completedPv"] = completedPv,
+                    ["pvIntervalMs"] = pvIntervalMs,
+                    ["pvUrls"] = ToJsonArray(pvUrls),
+                    ["loadCompleted"] = finalLoadCompleted,
+                    ["loadTimedOut"] = lastLoadTimedOut,
+                    ["loadErrorCode"] = lastLoadResponse?.ErrorCode.ToString() ?? string.Empty,
+                    ["httpStatusCode"] = lastLoadResponse?.HttpStatusCode ?? -1,
                     ["loadTimeoutMs"] = loadTimeoutMs,
                     ["cachePath"] = cachePath,
                     ["screenshotShown"] = screenshotShown,
@@ -263,7 +305,7 @@ namespace CefClient
                 {
                     BrowserId = BrowserId,
                     Success = true,
-                    Message = loadCompleted ? $"执行成功:{ua}" : "页面加载较慢，已按超时继续",
+                    Message = finalLoadCompleted ? $"执行成功:{ua}" : "页面加载较慢，已按超时继续",
                     Data = successData
                 };
             }
@@ -417,6 +459,54 @@ namespace CefClient
                 _log($"{BrowserId}: screenshot capture failed: {ex.Message}");
                 return false;
             }
+        }
+
+        private static List<string> BuildPvUrls(JsonNode? payload, string? defaultUrl)
+        {
+            var urls = new List<string>();
+            var pvUrlsNode = payload?["pvUrls"];
+
+            if (pvUrlsNode is JsonArray pvUrlsArray)
+            {
+                foreach (var item in pvUrlsArray)
+                {
+                    AddUrlIfNotEmpty(urls, item?.ToString());
+                }
+            }
+            else
+            {
+                var pvUrlsText = pvUrlsNode?.ToString();
+                if (!string.IsNullOrWhiteSpace(pvUrlsText))
+                {
+                    var parts = pvUrlsText.Split(new[] { '\r', '\n', ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    foreach (var part in parts)
+                    {
+                        AddUrlIfNotEmpty(urls, part);
+                    }
+                }
+            }
+
+            if (urls.Count == 0)
+                AddUrlIfNotEmpty(urls, defaultUrl);
+
+            return urls;
+        }
+
+        private static void AddUrlIfNotEmpty(List<string> urls, string? url)
+        {
+            if (!string.IsNullOrWhiteSpace(url))
+                urls.Add(url.Trim());
+        }
+
+        private static JsonArray ToJsonArray(IEnumerable<string> values)
+        {
+            var array = new JsonArray();
+            foreach (var value in values)
+            {
+                array.Add(value);
+            }
+
+            return array;
         }
 
         private static bool GetBool(JsonNode? payload, string name, bool defaultValue)
