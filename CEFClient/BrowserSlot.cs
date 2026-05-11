@@ -21,7 +21,14 @@ namespace CefClient
         public IRequestContext RequestContext { get; }
         public string CachePath { get; }
         private readonly Control _parent;
+        private readonly object _navigationStateLock = new();
         private int _disposed;
+        private string _currentAddress = string.Empty;
+        private string _lastMainFrameUrl = string.Empty;
+        private string _lastMainFrameLoadErrorCode = string.Empty;
+        private int _lastMainFrameLoadErrorCodeValue;
+        private string _lastMainFrameLoadErrorText = string.Empty;
+        private string _lastMainFrameFailedUrl = string.Empty;
 
         public BrowserSlot(
             string browserId,
@@ -37,6 +44,10 @@ namespace CefClient
             RequestContext = requestContext;
             CachePath = cachePath;
             _parent = parent;
+
+            Browser.AddressChanged += Browser_AddressChanged;
+            Browser.FrameLoadStart += Browser_FrameLoadStart;
+            Browser.LoadError += Browser_LoadError;
         }
         public async Task<bool> WaitForInitializedAsync(
             int timeoutMs = BrowserInitializationTimeoutMs,
@@ -104,8 +115,10 @@ namespace CefClient
 
             var task = payload?["task"];
             var sleepDelayMs = GetSleepDelayMilliseconds(task);
-            var url = payload?["url"]?.ToString();
-            var referer = payload?["referer"]?.ToString();
+            var url = GetString(payload, "url");
+            var referer = GetString(payload, "referer");
+            if (string.IsNullOrWhiteSpace(referer))
+                referer = GetString(task, "referer");
 
 
             var taskId = payload?["taskId"]?.ToString() ?? string.Empty;
@@ -151,6 +164,21 @@ namespace CefClient
                     return result;
                 }
 
+                var urlValidationError = ValidateHttpNavigationUrl(url, "url");
+                if (!string.IsNullOrWhiteSpace(urlValidationError))
+                {
+                    result = new BrowserRunResult
+                    {
+                        BrowserId = BrowserId,
+                        Success = false,
+                        Message = urlValidationError,
+                        Data = BuildRunData(url, referer, sleepDelayMs, taskId: taskId, consumerId: consumerId, uvIndex: uvIndex, loadTimeoutMs: loadTimeoutMs, pvTotal: pvTotal, completedPv: completedPv, pvIntervalMs: pvIntervalMs)
+                    };
+
+                    await PublishStatusAsync(statusChanged, "error", false, result.Message, cancellationToken, result.Data);
+                    return result;
+                }
+
                 if (!await WaitForInitializedAsync(cancellationToken: cancellationToken))
                 {
                     result = new BrowserRunResult
@@ -169,10 +197,18 @@ namespace CefClient
                 var lastLoadTimedOut = false;
                 var finalLoadCompleted = false;
 
-                var refererHeaders = BuildRefererHeaders(referer);
+                var usableReferer = GetUsableReferer(referer, out var ignoredRefererReason);
+                if (!string.IsNullOrWhiteSpace(ignoredRefererReason))
+                {
+                    await PublishLogAsync($"Ignored invalid referer. reason={ignoredRefererReason}, referer={referer}");
+                }
+
+                var refererHeaders = BuildRefererHeaders(usableReferer);
 
                 for (var pvIndex = 1; pvIndex <= pvTotal; pvIndex++)
                 {
+                    ResetNavigationDiagnostics(url);
+                    await PublishLogAsync($"PV {pvIndex}/{pvTotal} loading. url={url}, referer={usableReferer}, timeoutMs={loadTimeoutMs}");
 
                     var navigationTask = await UiInvokeAsync(
                         () => Browser.WaitForNavigationAsync(
@@ -184,7 +220,7 @@ namespace CefClient
                     {
                         if (refererHeaders != null)
                         {
-                            LoadUrl(Browser, url, "GET", referrer: referer);
+                            LoadUrl(Browser, url, "GET", referrer: usableReferer);
                         }
                         else
                         {
@@ -201,6 +237,7 @@ namespace CefClient
                     catch (TimeoutException)
                     {
                         loadTimedOut = true;
+                        await PublishLogAsync($"PV {pvIndex}/{pvTotal} navigation timeout after {loadTimeoutMs}ms. {GetNavigationDiagnosticsSummary(loadResponse)}");
                         await UiInvokeAsync(() => TryStopBrowser(Browser), CancellationToken.None);
                     }
 
@@ -226,24 +263,29 @@ namespace CefClient
                         pvIndex: pvIndex,
                         pvTotal: pvTotal,
                         completedPv: completedPv,
-                        pvIntervalMs: pvIntervalMs);
+                        pvIntervalMs: pvIntervalMs,
+                        failedUrl: GetLastMainFrameFailedUrl(),
+                        loadErrorText: GetLastMainFrameLoadErrorText(),
+                        currentAddress: GetCurrentAddress(),
+                        ignoredRefererReason: ignoredRefererReason);
 
 
 
 
                     if (loadFailed)
                     {
-                        await PublishLogAsync($"PV {pvIndex}/{pvTotal} load failed. error={loadResponse?.ErrorCode}, httpStatus={loadResponse?.HttpStatusCode}");
+                        var failureMessage = GetNavigationFailureMessage(loadResponse);
+                        await PublishLogAsync($"PV {pvIndex}/{pvTotal} load failed. {GetNavigationDiagnosticsSummary(loadResponse)}");
 
                         result = new BrowserRunResult
                         {
                             BrowserId = BrowserId,
                             Success = false,
-                            Message = "页面加载失败",
+                            Message = $"页面加载失败,{failureMessage}",
                             Data = pvData
                         };
 
-                        await PublishStatusAsync(statusChanged, "error", false, $"第 {pvIndex}/{pvTotal} 次 PV 页面加载失败,{loadResponse?.ErrorCode}", cancellationToken, pvData);
+                        await PublishStatusAsync(statusChanged, "error", false, $"第 {pvIndex}/{pvTotal} 次 PV 页面加载失败,{failureMessage}", cancellationToken, pvData);
 
 
 
@@ -368,7 +410,11 @@ namespace CefClient
             int? pvIndex = null,
             int? pvTotal = null,
             int? completedPv = null,
-            int? pvIntervalMs = null)
+            int? pvIntervalMs = null,
+            string? failedUrl = null,
+            string? loadErrorText = null,
+            string? currentAddress = null,
+            string? ignoredRefererReason = null)
         {
             var data = new JsonObject
             {
@@ -404,8 +450,137 @@ namespace CefClient
                 data["completedPv"] = completedPv.Value;
             if (pvIntervalMs.HasValue)
                 data["pvIntervalMs"] = pvIntervalMs.Value;
+            if (!string.IsNullOrWhiteSpace(failedUrl))
+                data["failedUrl"] = failedUrl;
+            if (!string.IsNullOrWhiteSpace(loadErrorText))
+                data["loadErrorText"] = loadErrorText;
+            if (!string.IsNullOrWhiteSpace(currentAddress))
+                data["currentAddress"] = currentAddress;
+            if (!string.IsNullOrWhiteSpace(ignoredRefererReason))
+                data["ignoredRefererReason"] = ignoredRefererReason;
 
             return data;
+        }
+
+        private void Browser_AddressChanged(object? sender, AddressChangedEventArgs e)
+        {
+            lock (_navigationStateLock)
+            {
+                _currentAddress = e.Address ?? string.Empty;
+            }
+        }
+
+        private void Browser_FrameLoadStart(object? sender, FrameLoadStartEventArgs e)
+        {
+            if (!e.Frame.IsMain)
+                return;
+
+            lock (_navigationStateLock)
+            {
+                _lastMainFrameUrl = e.Url ?? string.Empty;
+            }
+        }
+
+        private void Browser_LoadError(object? sender, LoadErrorEventArgs e)
+        {
+            if (!e.Frame.IsMain)
+                return;
+
+            lock (_navigationStateLock)
+            {
+                _lastMainFrameLoadErrorCode = e.ErrorCode.ToString();
+                _lastMainFrameLoadErrorCodeValue = (int)e.ErrorCode;
+                _lastMainFrameLoadErrorText = e.ErrorText ?? string.Empty;
+                _lastMainFrameFailedUrl = e.FailedUrl ?? string.Empty;
+            }
+        }
+
+        private void ResetNavigationDiagnostics(string? requestedUrl)
+        {
+            lock (_navigationStateLock)
+            {
+                _lastMainFrameUrl = requestedUrl ?? string.Empty;
+                _lastMainFrameLoadErrorCode = string.Empty;
+                _lastMainFrameLoadErrorCodeValue = 0;
+                _lastMainFrameLoadErrorText = string.Empty;
+                _lastMainFrameFailedUrl = string.Empty;
+            }
+        }
+
+        private string GetCurrentAddress()
+        {
+            lock (_navigationStateLock)
+            {
+                return _currentAddress;
+            }
+        }
+
+        private string GetLastMainFrameFailedUrl()
+        {
+            lock (_navigationStateLock)
+            {
+                return _lastMainFrameFailedUrl;
+            }
+        }
+
+        private string GetLastMainFrameLoadErrorText()
+        {
+            lock (_navigationStateLock)
+            {
+                return _lastMainFrameLoadErrorText;
+            }
+        }
+
+        private string GetNavigationDiagnosticsSummary(WaitForNavigationAsyncResponse? loadResponse)
+        {
+            lock (_navigationStateLock)
+            {
+                var errorCode = loadResponse?.ErrorCode.ToString() ?? _lastMainFrameLoadErrorCode;
+                var errorCodeValue = loadResponse != null ? (int)loadResponse.ErrorCode : _lastMainFrameLoadErrorCodeValue;
+                var httpStatus = loadResponse?.HttpStatusCode ?? -1;
+                return $"error={errorCode}({errorCodeValue}), httpStatus={httpStatus}, errorText={_lastMainFrameLoadErrorText}, failedUrl={_lastMainFrameFailedUrl}, currentAddress={_currentAddress}, frameUrl={_lastMainFrameUrl}";
+            }
+        }
+
+        private string GetNavigationFailureMessage(WaitForNavigationAsyncResponse? loadResponse)
+        {
+            lock (_navigationStateLock)
+            {
+                var errorCode = loadResponse?.ErrorCode.ToString() ?? _lastMainFrameLoadErrorCode;
+                var errorText = string.IsNullOrWhiteSpace(_lastMainFrameLoadErrorText) ? "无 HTTP 响应" : _lastMainFrameLoadErrorText;
+                var failedUrl = string.IsNullOrWhiteSpace(_lastMainFrameFailedUrl) ? _lastMainFrameUrl : _lastMainFrameFailedUrl;
+                return $"{errorCode}: {errorText}, failedUrl={failedUrl}";
+            }
+        }
+
+        private static string? ValidateHttpNavigationUrl(string? url, string name)
+        {
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+                return $"{name} 格式不正确，必须是完整的 http/https 地址: {url}";
+
+            if (!string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+            {
+                return $"{name} 协议不支持，仅支持 http/https: {url}";
+            }
+
+            return null;
+        }
+
+        private static string? GetUsableReferer(string? referer, out string? ignoredReason)
+        {
+            ignoredReason = null;
+            if (string.IsNullOrWhiteSpace(referer))
+                return null;
+
+            var validationError = ValidateHttpNavigationUrl(referer, "referer");
+            if (!string.IsNullOrWhiteSpace(validationError))
+            {
+                ignoredReason = validationError;
+                return null;
+            }
+
+            return referer;
         }
 
         private WebHeaderCollection? BuildRefererHeaders(string? referer)
@@ -691,6 +866,13 @@ namespace CefClient
             return Task.CompletedTask;
         }
 
+        private void DetachBrowserEvents()
+        {
+            Browser.AddressChanged -= Browser_AddressChanged;
+            Browser.FrameLoadStart -= Browser_FrameLoadStart;
+            Browser.LoadError -= Browser_LoadError;
+        }
+
         /// <summary>
         /// 真正做重释放，建议后台调用
         /// </summary>
@@ -706,6 +888,7 @@ namespace CefClient
                     if (HostPanel.Controls.Contains(Browser))
                         HostPanel.Controls.Remove(Browser);
 
+                    DetachBrowserEvents();
                     Browser.Dispose();
                     HostPanel.Dispose();
                 });
@@ -730,6 +913,7 @@ namespace CefClient
                         _parent.Controls.Remove(HostPanel);
 
                     HostPanel.Controls.Remove(Browser);
+                    DetachBrowserEvents();
                     Browser.Dispose();
                     HostPanel.Dispose();
                 });
