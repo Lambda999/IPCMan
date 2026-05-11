@@ -1023,11 +1023,12 @@ namespace MainClient
             var url = taskObj["url"]?.GetValue<string>();
             var referer = taskObj["referer"]?.GetValue<string>();
 
-            if (!string.IsNullOrWhiteSpace(url))
-                url = UrlHelper.URLMacroReplacement(url, ctx.RealIp, taskObj, devObj, ctx.OS, _appSettings, timestamp);
-
             if (!string.IsNullOrWhiteSpace(referer))
                 referer = UrlHelper.URLMacroReplacement(referer, ctx.RealIp, taskObj, devObj, ctx.OS, _appSettings, timestamp);
+
+            timestamp = CommonHelper.UnixTimeNowSecond();
+            if (!string.IsNullOrWhiteSpace(url))
+                url = UrlHelper.URLMacroReplacement(url, ctx.RealIp, taskObj, devObj, ctx.OS, _appSettings, timestamp);
 
 
             return new JsonObject
@@ -1497,128 +1498,7 @@ namespace MainClient
 
             return args;
         }
-
-        /// <summary>
-        /// 执行插件
-        /// </summary>
-        /// <param name="ctx"></param>
-        /// <param name="args"></param>
-        /// <param name="consumerId"></param>
-        /// <param name="uvIndex"></param>
-        /// <param name="token"></param>
-        /// <returns></returns>
-        private async Task<bool> ExecutePluginOnceAsync(
-        ConsumerTaskContext ctx,
-        JsonObject args,
-        int consumerId,
-        int uvIndex,
-        CancellationToken token)
-        {
-            LogWriteLine("提交任务");
-            //if (!allPlugins.TryGetValue(_appSettings.QTPName, out var plugin) || plugin.type == null)
-            //{
-            //    _logger.LogError("ConsumerAsync plugin not found: {PluginName}", _appSettings.QTPName);
-            //    return false;
-            //}
-
-            //var pluginInstance = Activator.CreateInstance(
-            //    plugin.type,
-            //    new object[] { _domainService, _playwrightProvider, _aggregator, _processManager, _adeHelper, _nameGenerator, _appSettings });
-
-            //if (pluginInstance is not IQTPService pluginService)
-            //{
-            //    _logger.LogWarning("ConsumerAsync plugin instance invalid. plugin={PluginName}", _appSettings.QTPName);
-            //    return false;
-            //}
-
-            //var uniqueId = Guid.NewGuid().ToString("D");
-
-            //EventHandler<PluginLogEventArgs>? logHandler = null;
-            //EventHandler<TaskStateChangedEventArgs>? stateChangedHandler = null;
-            //EventHandler<TaskAdWordEventArgs>? adWordHandler = null;
-
-            //try
-            //{
-            //    logHandler = (s, e) => LogWriteLine(e);
-            //    stateChangedHandler = (s, e) =>
-            //    {
-            //        _aggregator.Enqueue(new TaskEvent(e.Id, e.Type, e.Count, e.Data));
-            //    };
-            //    adWordHandler = (s, e) =>
-            //    {
-            //        _aggregator.EnqueueAdWord(e.Type, e.Word);
-            //    };
-
-            //    pluginService.OnLogEventHandler += logHandler;
-            //    pluginService.OnStateChangedEventHandler += stateChangedHandler;
-            //    pluginService.OnTaskAdWordEventHandler += adWordHandler;
-
-            //    LogWriteLine(
-            //        $"提交任务:{ctx.TaskTitle}[{ctx.TaskId}_{consumerId}_s{consumerId}_{uvIndex + 1}],os={ctx.OS},proxy={ctx.ProxyServer ?? "False"},realIp={ctx.RealIp},uv={ctx.TotalUV}/{uvIndex + 1}");
-            //    LogWriteLine($"任务追踪: taskId={ctx.TaskId}, uniqueId={uniqueId}, consumerId={consumerId}, uvIndex={uvIndex + 1}");
-
-            //    try
-            //    {
-            //        var (_, isPageTriggerClick, _) =
-            //            await pluginService.ExecuteWorkerAsync(uniqueId, args, token);
-
-            //        if (ctx.TotalUV > 1 && isPageTriggerClick && _appSettings.UVsTriggerOne)
-            //            return true;
-            //    }
-            //    catch (OperationCanceledException) when (token.IsCancellationRequested)
-            //    {
-            //        throw;
-            //    }
-            //    catch (Exception ex)
-            //    {
-            //        _logger.LogError(ex,
-            //            "ConsumerAsync plugin execute failed. taskId={TaskId}, consumer={ConsumerId}",
-            //            ctx.TaskId, consumerId);
-            //    }
-
-            //    return false;
-            //}
-            //finally
-            //{
-            //    if (logHandler != null) pluginService.OnLogEventHandler -= logHandler;
-            //    if (stateChangedHandler != null) pluginService.OnStateChangedEventHandler -= stateChangedHandler;
-            //    if (adWordHandler != null) pluginService.OnTaskAdWordEventHandler -= adWordHandler;
-
-            //    try
-            //    {
-            //        await _processManager.CloseAsync(uniqueId);
-            //    }
-            //    catch (Exception ex)
-            //    {
-            //        _logger.LogWarning(ex, "Close process failed. uniqueId={UniqueId}", uniqueId);
-            //    }
-
-            //    if (pluginService is IAsyncDisposable asyncDisposable)
-            //    {
-            //        try
-            //        {
-            //            await asyncDisposable.DisposeAsync();
-            //        }
-            //        catch (Exception ex)
-            //        {
-            //            _logger.LogWarning(ex, "Async dispose plugin failed. uniqueId={UniqueId}", uniqueId);
-            //        }
-            //    }
-            //    else if (pluginService is IDisposable disposable)
-            //    {
-            //        try
-            //        {
-            //            disposable.Dispose();
-            //        }
-            //        catch (Exception ex)
-            //        {
-            //            _logger.LogWarning(ex, "Dispose plugin failed. uniqueId={UniqueId}", uniqueId);
-            //        }
-            //    }
-            //}
-            return await Task.FromResult(true);
-        }
-
+ 
 
         private void InitPipelineRunner()
         {

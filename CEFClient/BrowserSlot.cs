@@ -73,7 +73,7 @@ namespace CefClient
             CancellationToken cancellationToken = default,
             Func<BrowserRunStatus, CancellationToken, Task>? statusChanged = null)
         {
-            await Task.Delay(5000);
+
             var task = payload?["task"];
             var sleepDelayMs = GetSleepDelayMilliseconds(task);
             var url = payload?["url"]?.ToString();
@@ -96,7 +96,6 @@ namespace CefClient
 
             try
             {
-                await PublishLogAsync($"RunAsync start. taskId={taskId}, consumerId={consumerId}, uvIndex={uvIndex}, url={url}, pvTotal={pvTotal}");
 
                 await PublishStatusAsync(statusChanged, "start", true, "browser started", cancellationToken, BuildRunData(
                     url,
@@ -112,8 +111,6 @@ namespace CefClient
 
                 if (string.IsNullOrWhiteSpace(url))
                 {
-                    await PublishLogAsync("url 不能为空");
-
                     result = new BrowserRunResult
                     {
                         BrowserId = BrowserId,
@@ -134,7 +131,6 @@ namespace CefClient
 
                 for (var pvIndex = 1; pvIndex <= pvTotal; pvIndex++)
                 {
-                    await PublishLogAsync($"PV {pvIndex}/{pvTotal} loading. url={url}, referer={referer}, timeoutMs={loadTimeoutMs}");
 
                     var navigationTask = Browser.WaitForNavigationAsync(
                         TimeSpan.FromMilliseconds(loadTimeoutMs),
@@ -142,7 +138,7 @@ namespace CefClient
 
                     if (refererHeaders != null)
                     {
-                        LoadUrl(Browser, url, "GET", refererHeaders);
+                        LoadUrl(Browser, url, "GET", referrer: referer);
                     }
                     else
                     {
@@ -158,7 +154,6 @@ namespace CefClient
                     catch (TimeoutException)
                     {
                         loadTimedOut = true;
-                        await PublishLogAsync($"PV {pvIndex}/{pvTotal} navigation timeout after {loadTimeoutMs}ms. url={url}");
                         TryStopBrowser(Browser);
                     }
 
@@ -208,9 +203,7 @@ namespace CefClient
                         return result;
                     }
 
-                    await PublishLogAsync($"PV {pvIndex}/{pvTotal} completed. loadCompleted={loadCompleted}, timedOut={loadTimedOut}, httpStatus={loadResponse?.HttpStatusCode ?? -1}");
                     await PublishStatusAsync(statusChanged, "pv", true, loadCompleted ? $"pv {pvIndex}/{pvTotal} opened" : $"pv {pvIndex}/{pvTotal} 页面加载较慢，已按超时继续", cancellationToken, pvData);
-                    await Task.Delay(TimeSpan.FromSeconds(90));
                     if (pvIndex < pvTotal && pvIntervalMs > 0)
                     {
                         await Task.Delay(TimeSpan.FromMilliseconds(pvIntervalMs), cancellationToken);
@@ -253,7 +246,6 @@ namespace CefClient
                     completedPv: completedPv,
                     pvIntervalMs: pvIntervalMs);
 
-                await PublishLogAsync($"RunAsync success. title={title}, completedPv={completedPv}/{pvTotal}, finalLoadCompleted={finalLoadCompleted}");
                 await PublishStatusAsync(statusChanged, "success", true, "执行成功", cancellationToken, successData);
 
                 result = new BrowserRunResult
@@ -275,8 +267,6 @@ namespace CefClient
                     Message = "取消",
                     Data = BuildRunData(url, referer, sleepDelayMs, taskId: taskId, consumerId: consumerId, uvIndex: uvIndex, loadTimeoutMs: loadTimeoutMs, pvTotal: pvTotal, completedPv: completedPv, pvIntervalMs: pvIntervalMs)
                 };
-
-                await PublishLogAsync("RunAsync canceled");
                 await PublishStatusAsync(statusChanged, "error", false, "取消", CancellationToken.None, result.Data);
                 return result;
             }
@@ -290,7 +280,6 @@ namespace CefClient
                     Data = BuildRunData(url, referer, sleepDelayMs, taskId: taskId, consumerId: consumerId, uvIndex: uvIndex, loadTimeoutMs: loadTimeoutMs, pvTotal: pvTotal, completedPv: completedPv, pvIntervalMs: pvIntervalMs)
                 };
 
-                await PublishLogAsync($"RunAsync exception: {ex.Message}");
                 await PublishStatusAsync(statusChanged, "error", false, ex.Message, CancellationToken.None, result.Data);
                 return result;
             }
@@ -372,33 +361,27 @@ namespace CefClient
             return data;
         }
 
-        private static WebHeaderCollection? BuildRefererHeaders(string? referer)
+        private WebHeaderCollection? BuildRefererHeaders(string? referer)
         {
             if (string.IsNullOrWhiteSpace(referer))
                 return null;
 
             return new WebHeaderCollection
             {
-                [HttpRequestHeader.Referer] = referer
+
             };
         }
 
-        public static void LoadUrl(
+        public void LoadUrl(
             ChromiumWebBrowser browser,
             string? url,
             string requestMethod = "GET",
+            string? referrer = null,
             WebHeaderCollection? headers = null,
             byte[]? postDataBytes = null)
         {
             if (browser == null || browser.IsDisposed || string.IsNullOrWhiteSpace(url))
                 return;
-
-
-
-
-
-
-
             using var frame = browser.GetMainFrame();
             var initializePostData = string.Equals(requestMethod, "POST", StringComparison.OrdinalIgnoreCase);
             var request = frame.CreateRequest(initializePostData: initializePostData);
@@ -411,6 +394,14 @@ namespace CefClient
             request.Url = url;
             request.Method = string.IsNullOrWhiteSpace(requestMethod) ? "GET" : requestMethod;
 
+            if (!string.IsNullOrWhiteSpace(referrer))
+            {
+                request.SetReferrer(
+                    referrer,
+                    ReferrerPolicy.NeverClearReferrer
+                );
+            }
+
             if (headers != null && headers.HasKeys())
             {
                 var originHeaders = request.Headers ?? new NameValueCollection();
@@ -418,18 +409,12 @@ namespace CefClient
                 {
                     originHeaders.Set(keyName, headers[keyName]);
                 }
-
-                var refererValue = headers[HttpRequestHeader.Referer];
-                if (!string.IsNullOrWhiteSpace(refererValue))
-                {
-                    request.SetReferrer(refererValue, ReferrerPolicy.Origin);
-                }
-
                 request.Headers = originHeaders;
             }
 
             frame.LoadRequest(request);
         }
+
 
 
         private async Task PublishStatusAsync(
