@@ -28,7 +28,7 @@ namespace CefClient
                 Dock = DockStyle.Fill,
                 AutoScroll = true,
                 WrapContents = true,
-                FlowDirection = FlowDirection.LeftToRight
+                FlowDirection = FlowDirection.LeftToRight,
             };
 
             Controls.Add(_hostPanel);
@@ -40,7 +40,11 @@ namespace CefClient
         }
 
 
-        public async Task<bool> CreateBrowserAsync(string? taskId, string browserId, CancellationToken cancellationToken = default)
+        public async Task<bool> CreateBrowserAsync(
+            string taskId,
+            string browserId,
+            System.Text.Json.Nodes.JsonNode? payload,
+            CancellationToken cancellationToken = default)
         {
             var createLock = _createLocks.GetOrAdd(browserId, _ => new SemaphoreSlim(1, 1));
             await createLock.WaitAsync(cancellationToken);

@@ -21,6 +21,8 @@ namespace CefClient
         public Panel HostPanel { get; }
         public ChromiumWebBrowser Browser { get; }
         public IRequestContext RequestContext { get; }
+        public DeviceProfileResult DevProfile { get; }
+
         public string CachePath { get; }
         private readonly Control _parent;
         private readonly object _navigationStateLock = new();
@@ -38,6 +40,7 @@ namespace CefClient
             ChromiumWebBrowser browser,
             IRequestContext requestContext,
             string cachePath,
+            DeviceProfileResult devProfile,
             Control parent)
         {
             BrowserId = browserId;
@@ -45,6 +48,7 @@ namespace CefClient
             Browser = browser;
             RequestContext = requestContext;
             CachePath = cachePath;
+            DevProfile = devProfile;
             _parent = parent;
 
             Browser.AddressChanged += Browser_AddressChanged;
