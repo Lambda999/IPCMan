@@ -4,6 +4,7 @@ namespace CefClient
 {
     using CefSharp;
     using CefSharp.WinForms;
+    using Microsoft.VisualBasic;
     using System.Collections.Specialized;
     using System.Diagnostics;
     using System.Globalization;
@@ -72,12 +73,12 @@ namespace CefClient
             CancellationToken cancellationToken = default,
             Func<BrowserRunStatus, CancellationToken, Task>? statusChanged = null)
         {
+            await Task.Delay(5000);
             var task = payload?["task"];
             var sleepDelayMs = GetSleepDelayMilliseconds(task);
             var url = payload?["url"]?.ToString();
-            var referer = GetString(payload, "referer");
-            if (string.IsNullOrWhiteSpace(referer))
-                referer = GetString(task, "referer");
+            var referer = payload?["referer"]?.ToString();
+
 
             var taskId = payload?["taskId"]?.ToString() ?? string.Empty;
             var consumerId = payload?["consumerId"]?.ToString() ?? "unknown";
@@ -119,6 +120,7 @@ namespace CefClient
                 WaitForNavigationAsyncResponse? lastLoadResponse = null;
                 var lastLoadTimedOut = false;
                 var finalLoadCompleted = false;
+
                 var refererHeaders = BuildRefererHeaders(referer);
 
                 for (var pvIndex = 1; pvIndex <= pvTotal; pvIndex++)
@@ -172,8 +174,12 @@ namespace CefClient
                         completedPv: completedPv,
                         pvIntervalMs: pvIntervalMs);
 
+
+
+
                     if (loadFailed)
                     {
+
                         result = new BrowserRunResult
                         {
                             BrowserId = BrowserId,
@@ -182,12 +188,15 @@ namespace CefClient
                             Data = pvData
                         };
 
-                        await PublishStatusAsync(statusChanged, "error", false, $"第 {pvIndex}/{pvTotal} 次 PV 页面加载失败", cancellationToken, pvData);
+                        await PublishStatusAsync(statusChanged, "error", false, $"第 {pvIndex}/{pvTotal} 次 PV 页面加载失败,{loadResponse?.ErrorCode}", cancellationToken, pvData);
+
+
+
                         return result;
                     }
 
                     await PublishStatusAsync(statusChanged, "pv", true, loadCompleted ? $"pv {pvIndex}/{pvTotal} opened" : $"pv {pvIndex}/{pvTotal} 页面加载较慢，已按超时继续", cancellationToken, pvData);
-
+                    await Task.Delay(TimeSpan.FromSeconds(90));
                     if (pvIndex < pvTotal && pvIntervalMs > 0)
                     {
                         await Task.Delay(TimeSpan.FromMilliseconds(pvIntervalMs), cancellationToken);
@@ -289,6 +298,7 @@ namespace CefClient
             }
         }
 
+
         private JsonObject BuildRunData(
             string? url,
             string? referer,
@@ -366,6 +376,12 @@ namespace CefClient
             if (browser == null || browser.IsDisposed || string.IsNullOrWhiteSpace(url))
                 return;
 
+
+
+
+
+
+
             using var frame = browser.GetMainFrame();
             var initializePostData = string.Equals(requestMethod, "POST", StringComparison.OrdinalIgnoreCase);
             var request = frame.CreateRequest(initializePostData: initializePostData);
@@ -389,7 +405,7 @@ namespace CefClient
                 var refererValue = headers[HttpRequestHeader.Referer];
                 if (!string.IsNullOrWhiteSpace(refererValue))
                 {
-                    request.SetReferrer(refererValue, ReferrerPolicy.NeverClearReferrer);
+                    request.SetReferrer(refererValue, ReferrerPolicy.Origin);
                 }
 
                 request.Headers = originHeaders;

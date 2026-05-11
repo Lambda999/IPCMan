@@ -71,6 +71,14 @@ namespace CefClient
                     Dock = DockStyle.Fill
                 };
 
+                browser.FrameLoadStart += (a, b) =>
+                {
+                    if (b.Frame.IsMain)
+                    {
+                        browser.ShowDevTools();
+                    }
+                };
+
                 panel.Controls.Add(browser);
                 _hostPanel.Controls.Add(panel);
 

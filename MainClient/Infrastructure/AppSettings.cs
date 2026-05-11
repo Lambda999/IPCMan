@@ -89,5 +89,21 @@
         /// </summary>
         public string DevApiUrl { get; set; }
 
+        /// <summary>
+        /// 不回传OS
+        /// </summary>
+        public bool NoneOS { get; set; } = false;
+        /// <summary>
+        /// IOS 使用IMEI
+        /// </summary>
+        public bool Using_iOS_IMEI { get; set; } = false;
+
+        /// <summary>
+        /// IOS 使用MAC
+        /// </summary>
+        public bool Using_iOS_MAC { get; set; } = false;
+
+        
+
     }
 }

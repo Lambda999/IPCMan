@@ -9,7 +9,7 @@ namespace CefClient
         [STAThread]
         public static int Main(string[] args)
         {
-            Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+ 
 
             var pipeName = args
             .FirstOrDefault(x => x.StartsWith("--pipe-name=", StringComparison.OrdinalIgnoreCase))

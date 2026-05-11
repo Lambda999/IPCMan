@@ -13,7 +13,7 @@ using System.Collections.Concurrent;
 using System.Management;
 using System.Text.RegularExpressions;
 using System.Threading.Channels;
- 
+
 
 namespace MainClient
 {
@@ -173,9 +173,15 @@ namespace MainClient
             checkBox_IsHiddenMode.Checked = _appSettings.IsHiddenMode;
             checkBox_IsOsrMode.Checked = _appSettings.IsOsrMode;
             checkBox_IsProxyMode.Checked = _appSettings.IsProxyMode;
-
             numericUpDown_IpTtl.Value = _appSettings.IpTtl;
             numericUpDown_UVInterval.Value = Math.Max(numericUpDown_UVInterval.Minimum, Math.Min(numericUpDown_UVInterval.Maximum, _appSettings.UVInterval <= 0 ? 1000 : _appSettings.UVInterval));
+
+
+
+            checkBox_NoneOS.Checked = _appSettings.NoneOS;
+            checkBox_Using_iOS_IMEI.Checked = _appSettings.Using_iOS_IMEI;
+            checkBox_Using_iOS_MAC.Checked = _appSettings.Using_iOS_MAC;
+
 
         }
         private static object lock_config = new object();
@@ -198,7 +204,9 @@ namespace MainClient
                 _appSettings.IpTtl = (int)numericUpDown_IpTtl.Value;
                 _appSettings.UVInterval = (int)numericUpDown_UVInterval.Value;
 
-
+                _appSettings.Using_iOS_IMEI = checkBox_Using_iOS_IMEI.Checked;
+                _appSettings.Using_iOS_MAC = checkBox_Using_iOS_MAC.Checked;
+                _appSettings.NoneOS = checkBox_NoneOS.Checked;
                 UserConfigService.Save("AppSettings", _appSettings);
             }
 
@@ -376,7 +384,7 @@ namespace MainClient
                 writer.TryComplete(completionError);
             }
         }
- 
+
         /// <summary>
         /// 消费任务
         /// </summary>
@@ -582,7 +590,7 @@ namespace MainClient
                 consumerId,
                 _appSettings.IsOsrMode);
 
-            var cefConsumerId = _appSettings.IsOsrMode ? consumerId.ToString() : null;
+            var cefConsumerId = consumerId.ToString();
             await using var session = new CefClientSession(cefExePath, TimeSpan.FromSeconds(15), cefConsumerId);
 
             session.OnLog += message =>
@@ -590,7 +598,6 @@ namespace MainClient
                 _logger.LogInformation("CefClient[{TaskId}] {Message}", ctx.TaskId, message);
                 return Task.CompletedTask;
             };
-
 
             session.OnBrowserScreenshot += screenshot =>
             {
@@ -639,7 +646,7 @@ namespace MainClient
             int completedUvCount = 0;
             bool stopRemainingUvByResult = false;
             var inFlightBrowsers = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
-            var uvRunTimeout = TimeSpan.FromSeconds(90);
+            var uvRunTimeout = TimeSpan.FromSeconds(_appSettings.IpTtl);
 
             void TryCompleteAll()
             {
@@ -850,13 +857,14 @@ namespace MainClient
                     return await WaitForDispatchedUvCompletionAsync();
                 }
 
+
                 for (int uvIndex = 0; uvIndex < ctx.TotalUV; uvIndex++)
                 {
                     if (token.IsCancellationRequested)
                         return false;
 
                     string browserId = $"uv_{uvIndex + 1}";
-
+                    _aggregator.EnqueueTaskState(new AdTrafficTaskStateEvent(ctx.TaskId, AdTrafficTaskStateKind.Request, 1));
                     try
                     {
                         var dev = await GetDeviceForTaskAsync(ctx.OS, ctx.TaskId, uvIndex, innerToken);
@@ -979,7 +987,7 @@ namespace MainClient
             }
         }
 
-        private JsonObject BuildStartPayload(ConsumerTaskContext ctx, JsonNode rawTask)
+        private JsonObject BuildStartPayload(ConsumerTaskContext ctx, JsonNode task)
         {
             return new JsonObject
             {
@@ -987,32 +995,45 @@ namespace MainClient
                 ["taskTitle"] = ctx.TaskTitle ?? "",
                 ["os"] = (int)(ctx.OS),
                 ["totalUv"] = ctx.TotalUV,
-                ["rawTask"] = rawTask.ToString()
+                ["task"] = task.ToString()
             };
         }
 
         private JsonObject BuildRunBrowserPayload(
             ConsumerTaskContext ctx,
-            JsonNode rawTask,
-            JsonNode dev,
+            JsonNode taskObj,
+            JsonNode devObj,
             int consumerId,
             int uvIndex)
         {
+
+            var timestamp = CommonHelper.UnixTimeNowSecond();
+
+            var ua = devObj["ua"]?.GetValue<string>();
+            var url = taskObj["url"]?.GetValue<string>();
+            var referer = taskObj["referer"]?.GetValue<string>();
+
+            if (!string.IsNullOrWhiteSpace(url))
+                url = UrlHelper.URLMacroReplacement(url, ctx.RealIp, taskObj, devObj, ctx.OS, _appSettings, timestamp);
+
+            if (!string.IsNullOrWhiteSpace(referer))
+                referer = UrlHelper.URLMacroReplacement(referer, ctx.RealIp, taskObj, devObj, ctx.OS, _appSettings, timestamp);
+
+
             return new JsonObject
             {
                 ["taskId"] = ctx.UniqueId,
                 ["taskTitle"] = ctx.TaskTitle ?? "",
                 ["uvIndex"] = uvIndex,
-                ["uv"] = uvIndex + 1,
                 ["consumerId"] = consumerId,
                 ["os"] = (int)(ctx.OS),
-                ["device"] = dev is JsonNode devNode ? devNode.DeepClone() : JsonNode.Parse(System.Text.Json.JsonSerializer.Serialize(dev)),
-                ["userAgent"] = dev is JsonNode devToken ? devToken["ua"]?.GetValue<string>() ?? string.Empty : string.Empty,
+                ["device"] = devObj.DeepClone(),
+                ["userAgent"] = ua,
                 ["isProxyMode"] = _appSettings.IsProxyMode,
                 ["proxy_server"] = ctx.ProxyServer ?? string.Empty,
-                ["task"] = rawTask.DeepClone(),
-                ["url"] = ctx.Url,
-                ["referer"] = ctx.Referer,
+                ["task"] = taskObj.DeepClone(),
+                ["url"] = url,
+                ["referer"] = referer,
                 // OSR 端用这些短超时防止慢页面长期占住本次 UV，影响后续任务调度。
                 ["loadTimeoutMs"] = 8000,
                 ["firstScreenshotDelayMs"] = 1000,
@@ -1057,8 +1078,6 @@ namespace MainClient
             var ctx = new ConsumerTaskContext
             {
                 TaskId = taskIdToken.GetValue<int>(),
-                Url = url,
-                Referer = referer,
                 TotalUV = Math.Max(1, totalUvToken.GetValue<int>()),
                 TotalPV = Math.Max(1, totalPvToken.GetValue<int>()),
                 DevClientId = devClientId,
