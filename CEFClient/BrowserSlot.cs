@@ -13,6 +13,8 @@ namespace CefClient
 
     public sealed class BrowserSlot : IAsyncDisposable
     {
+        private const int BrowserInitializationTimeoutMs = 10000;
+
         public string BrowserId { get; }
         public Panel HostPanel { get; }
         public ChromiumWebBrowser Browser { get; }
@@ -36,29 +38,55 @@ namespace CefClient
             CachePath = cachePath;
             _parent = parent;
         }
+        public async Task<bool> WaitForInitializedAsync(
+            int timeoutMs = BrowserInitializationTimeoutMs,
+            CancellationToken cancellationToken = default)
+        {
+            var sw = Stopwatch.StartNew();
+
+            while (sw.ElapsedMilliseconds < timeoutMs)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (await UiInvokeAsync(() => !Browser.IsDisposed && Browser.IsBrowserInitialized, cancellationToken))
+                    return true;
+
+                await Task.Delay(50, cancellationToken);
+            }
+
+            return false;
+        }
+
         private async Task<string> GetPageTitleAsync(ChromiumWebBrowser browser, int timeoutMs = 3000)
         {
-            if (browser == null || browser.IsDisposed)
+            if (browser == null)
                 return "";
 
             var sw = Stopwatch.StartNew();
 
             while (sw.ElapsedMilliseconds < timeoutMs)
             {
-                if (browser.IsDisposed)
-                    return "";
+                var canExecute = await UiInvokeAsync(
+                    () => !browser.IsDisposed && browser.CanExecuteJavascriptInMainFrame,
+                    CancellationToken.None);
 
-                if (browser.CanExecuteJavascriptInMainFrame)
+                if (!canExecute)
                 {
-                    try
-                    {
-                        var result = await browser.EvaluateScriptAsync("document.title");
-                        return result.Success ? result.Result?.ToString() ?? "" : "";
-                    }
-                    catch
-                    {
-                        // 继续等一下再试
-                    }
+                    await Task.Delay(100);
+                    continue;
+                }
+
+                try
+                {
+                    var evaluateTask = await UiInvokeAsync(
+                        () => browser.EvaluateScriptAsync("document.title"),
+                        CancellationToken.None);
+                    var result = await evaluateTask;
+                    return result.Success ? result.Result?.ToString() ?? "" : "";
+                }
+                catch
+                {
+                    // 继续等一下再试
                 }
 
                 await Task.Delay(100);
@@ -123,6 +151,20 @@ namespace CefClient
                     return result;
                 }
 
+                if (!await WaitForInitializedAsync(cancellationToken: cancellationToken))
+                {
+                    result = new BrowserRunResult
+                    {
+                        BrowserId = BrowserId,
+                        Success = false,
+                        Message = "浏览器初始化超时",
+                        Data = BuildRunData(url, referer, sleepDelayMs, taskId: taskId, consumerId: consumerId, uvIndex: uvIndex, loadTimeoutMs: loadTimeoutMs, pvTotal: pvTotal, completedPv: completedPv, pvIntervalMs: pvIntervalMs)
+                    };
+
+                    await PublishStatusAsync(statusChanged, "error", false, result.Message, cancellationToken, result.Data);
+                    return result;
+                }
+
                 WaitForNavigationAsyncResponse? lastLoadResponse = null;
                 var lastLoadTimedOut = false;
                 var finalLoadCompleted = false;
@@ -132,18 +174,23 @@ namespace CefClient
                 for (var pvIndex = 1; pvIndex <= pvTotal; pvIndex++)
                 {
 
-                    var navigationTask = Browser.WaitForNavigationAsync(
-                        TimeSpan.FromMilliseconds(loadTimeoutMs),
+                    var navigationTask = await UiInvokeAsync(
+                        () => Browser.WaitForNavigationAsync(
+                            TimeSpan.FromMilliseconds(loadTimeoutMs),
+                            cancellationToken),
                         cancellationToken);
 
-                    if (refererHeaders != null)
+                    await UiInvokeAsync(() =>
                     {
-                        LoadUrl(Browser, url, "GET", referrer: referer);
-                    }
-                    else
-                    {
-                        Browser.Load(url);
-                    }
+                        if (refererHeaders != null)
+                        {
+                            LoadUrl(Browser, url, "GET", referrer: referer);
+                        }
+                        else
+                        {
+                            Browser.Load(url);
+                        }
+                    }, cancellationToken);
 
                     WaitForNavigationAsyncResponse? loadResponse = null;
                     var loadTimedOut = false;
@@ -154,7 +201,7 @@ namespace CefClient
                     catch (TimeoutException)
                     {
                         loadTimedOut = true;
-                        TryStopBrowser(Browser);
+                        await UiInvokeAsync(() => TryStopBrowser(Browser), CancellationToken.None);
                     }
 
                     var loadFailed = loadResponse != null && loadResponse.ErrorCode != CefErrorCode.None;
@@ -457,12 +504,80 @@ namespace CefClient
         {
             try
             {
-                if (!browser.IsDisposed)
+                if (!browser.IsDisposed && browser.IsBrowserInitialized)
                     browser.Stop();
             }
             catch
             {
             }
+        }
+
+        private Task UiInvokeAsync(Action action, CancellationToken cancellationToken = default)
+        {
+            return UiInvokeAsync(() =>
+            {
+                action();
+                return true;
+            }, cancellationToken);
+        }
+
+        private Task<T> UiInvokeAsync<T>(Func<T> func, CancellationToken cancellationToken = default)
+        {
+            var tcs = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            if (_parent.IsDisposed || _parent.Disposing)
+            {
+                tcs.TrySetException(new ObjectDisposedException(nameof(_parent)));
+                return tcs.Task;
+            }
+
+            if (cancellationToken.IsCancellationRequested)
+            {
+                tcs.TrySetCanceled(cancellationToken);
+                return tcs.Task;
+            }
+
+            void Execute()
+            {
+                try
+                {
+                    if (_parent.IsDisposed || _parent.Disposing)
+                    {
+                        tcs.TrySetException(new ObjectDisposedException(nameof(_parent)));
+                        return;
+                    }
+
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        tcs.TrySetCanceled(cancellationToken);
+                        return;
+                    }
+
+                    tcs.TrySetResult(func());
+                }
+                catch (Exception ex)
+                {
+                    tcs.TrySetException(ex);
+                }
+            }
+
+            try
+            {
+                if (_parent.InvokeRequired)
+                {
+                    _parent.BeginInvoke((Action)Execute);
+                }
+                else
+                {
+                    Execute();
+                }
+            }
+            catch (Exception ex)
+            {
+                tcs.TrySetException(ex);
+            }
+
+            return tcs.Task;
         }
 
         private static int GetSleepDelayMilliseconds(JsonNode? task)
@@ -586,24 +701,14 @@ namespace CefClient
 
             try
             {
-                if (HostPanel.Controls.Contains(Browser))
-                    HostPanel.Controls.Remove(Browser);
-            }
-            catch
-            {
-            }
+                await UiInvokeAsync(() =>
+                {
+                    if (HostPanel.Controls.Contains(Browser))
+                        HostPanel.Controls.Remove(Browser);
 
-            try
-            {
-                Browser.Dispose();
-            }
-            catch
-            {
-            }
-
-            try
-            {
-                HostPanel.Dispose();
+                    Browser.Dispose();
+                    HostPanel.Dispose();
+                });
             }
             catch
             {
@@ -619,26 +724,15 @@ namespace CefClient
         {
             try
             {
-                if (_parent.Controls.Contains(HostPanel))
-                    _parent.Controls.Remove(HostPanel);
-            }
-            catch { }
+                await UiInvokeAsync(() =>
+                {
+                    if (_parent.Controls.Contains(HostPanel))
+                        _parent.Controls.Remove(HostPanel);
 
-            try
-            {
-                HostPanel.Controls.Remove(Browser);
-            }
-            catch { }
-
-            try
-            {
-                Browser.Dispose();
-            }
-            catch { }
-
-            try
-            {
-                HostPanel.Dispose();
+                    HostPanel.Controls.Remove(Browser);
+                    Browser.Dispose();
+                    HostPanel.Dispose();
+                });
             }
             catch { }
 
