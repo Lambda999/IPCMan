@@ -19,6 +19,7 @@ namespace CefClient
     {
         private readonly FlowLayoutPanel _hostPanel;
         private readonly ConcurrentDictionary<string, BrowserSlot> _slots = new();
+        private readonly ConcurrentDictionary<string, SemaphoreSlim> _createLocks = new();
         public MainForm()
         {
             InitializeComponent();
@@ -45,70 +46,75 @@ namespace CefClient
             System.Text.Json.Nodes.JsonNode? payload,
             CancellationToken cancellationToken = default)
         {
+            var createLock = _createLocks.GetOrAdd(browserId, _ => new SemaphoreSlim(1, 1));
+            await createLock.WaitAsync(cancellationToken);
 
-
-            var device = payload?["device"];
-            var sw = device?["sw"]?.GetValue<int>() ?? 1080;
-            var sh = device?["sh"]?.GetValue<int>() ?? 1920;
-            var devProfile = AndroidViewportMatcher.Match(sw, sh);
-
-            var cachePath = CefCachePaths.GetBrowserCachePath(browserId);
-
-            var requestContext = new RequestContext(new RequestContextSettings
+            try
             {
-                CachePath = cachePath,
-                PersistUserPreferences = false,
-                PersistSessionCookies = false,
-            });
+                if (_slots.TryGetValue(browserId, out var existingSlot))
+                    return await existingSlot.WaitForInitialLoadAsync(cancellationToken: cancellationToken);
 
-            var slot = await UiInvokeAsync(() =>
-            {
-                var panel = new Panel
+                var slot = await UiInvokeAsync(() =>
                 {
-                    Width = 360,
-                    Height = 720,
-                    Margin = new Padding(5),
-                    BorderStyle = BorderStyle.FixedSingle
-                };
+                    Directory.CreateDirectory(CefCachePaths.RootCachePath);
 
-                var title = new Label
+                    var cachePath = CefCachePaths.GetTaskSlotCachePath(taskId, browserId);
+                    Directory.CreateDirectory(cachePath);
+
+                    var requestContext = new RequestContext(new RequestContextSettings
+                    {
+                        CachePath = cachePath,
+                        // PersistUserPreferences = true,
+                        PersistSessionCookies = false,
+                    });
+
+                    var panel = new Panel
+                    {
+                        Width = 420,
+                        Height = 920,
+                        Margin = new Padding(5),
+                        BorderStyle = BorderStyle.FixedSingle
+                    };
+
+                    var browser = new ChromiumWebBrowser("about:blank", requestContext)
+                    {
+                        Dock = DockStyle.Fill
+                    };
+
+                    //browser.FrameLoadStart += (a, b) =>
+                    //{
+                    //    if (b.Frame.IsMain)
+                    //    {
+                    //        browser.ShowDevTools();
+                    //    }
+                    //};
+
+                    panel.Controls.Add(browser);
+                    _hostPanel.Controls.Add(panel);
+
+                    return new BrowserSlot(browserId, panel, browser, requestContext, cachePath, _hostPanel);
+                }, cancellationToken);
+
+                if (!_slots.TryAdd(browserId, slot))
                 {
-                    AutoEllipsis = true,
-                    Dock = DockStyle.Top,
-                    Height = 28,
-                    Text = $"CefClient {browserId}",
-                    TextAlign = ContentAlignment.MiddleCenter
-                };
-
-                var browser = new ChromiumWebBrowser("about:blank", requestContext)
-                {
-                    Dock = DockStyle.Fill
-                };
-                panel.Controls.Add(browser);
-                panel.Controls.Add(title);
-                _hostPanel.Controls.Add(panel);
-
-                return new BrowserSlot(browserId, panel, browser, requestContext, cachePath, devProfile, _hostPanel);
-            }, cancellationToken);
-
-            if (!_slots.TryAdd(browserId, slot))
-            {
-                await slot.DisposeAsync();
-                if (!_slots.TryGetValue(browserId, out var addedByOtherThread))
+                    await slot.DisposeAsync();
                     return false;
+                }
 
-                return await addedByOtherThread.WaitForInitializedAsync(cancellationToken: cancellationToken);
+                if (await slot.WaitForInitialLoadAsync(cancellationToken: cancellationToken))
+                    return true;
+
+                if (_slots.TryRemove(browserId, out var failedSlot))
+                {
+                    await failedSlot.DisposeAsync();
+                }
+
+                return false;
             }
-
-            if (await slot.WaitForInitializedAsync(cancellationToken: cancellationToken))
-                return true;
-
-            if (_slots.TryRemove(browserId, out var failedSlot))
+            finally
             {
-                await failedSlot.DisposeAsync();
+                createLock.Release();
             }
-
-            return false;
         }
 
 
