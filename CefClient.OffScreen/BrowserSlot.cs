@@ -93,6 +93,38 @@ namespace CefClient
 
             try
             {
+                await PublishLogAsync($"RunAsync start. taskId={taskId}, consumerId={consumerId}, uvIndex={uvIndex}, url={url}", cancellationToken, new JsonObject
+                {
+                    ["taskId"] = taskId,
+                    ["consumerId"] = consumerId,
+                    ["uvIndex"] = uvIndex,
+                    ["url"] = url ?? string.Empty,
+                    ["referer"] = referer
+                });
+
+                if (string.IsNullOrWhiteSpace(url))
+                {
+                    await PublishLogAsync("url 不能为空", cancellationToken, new JsonObject
+                    {
+                        ["taskId"] = taskId,
+                        ["consumerId"] = consumerId,
+                        ["uvIndex"] = uvIndex
+                    });
+
+                    await PublishStatusAsync("error", false, "url 不能为空", cancellationToken, new JsonObject
+                    {
+                        ["taskId"] = taskId,
+                        ["consumerId"] = consumerId,
+                        ["uvIndex"] = uvIndex
+                    });
+
+                    return new BrowserRunResult
+                    {
+                        BrowserId = BrowserId,
+                        Success = false,
+                        Message = "url 不能为空"
+                    };
+                }
 
                 //url = "chrome://version/";
                 //var cachePath = System.IO.Path.GetFullPath(CefCachePaths.GetUvCachePath(taskId, consumerId, uvIndex, BrowserId));
@@ -135,6 +167,16 @@ namespace CefClient
                 };
                 await browser.WaitForInitialLoadAsync()
                     .WaitAsync(TimeSpan.FromMilliseconds(DefaultInitialLoadTimeoutMs), cancellationToken);
+
+                await PublishLogAsync($"Browser created. size={sw}x{sh}, platform={platform}, cachePath={cachePath}", cancellationToken, new JsonObject
+                {
+                    ["taskId"] = taskId,
+                    ["consumerId"] = consumerId,
+                    ["uvIndex"] = uvIndex,
+                    ["cachePath"] = cachePath,
+                    ["width"] = sw,
+                    ["height"] = sh
+                });
 
                 await PublishStatusAsync("start", true, "browser created", cancellationToken, new JsonObject
                 {
@@ -186,6 +228,16 @@ namespace CefClient
                 // OSR 模式每次 runBrowser 都是一次性浏览器；同一个 RunAsync 内的 pv 循环复用同一个浏览器上下文。
                 for (var pvIndex = 1; pvIndex <= pvTotal; pvIndex++)
                 {
+                    await PublishLogAsync($"PV {pvIndex}/{pvTotal} loading. url={url}, referer={referer}, timeoutMs={loadTimeoutMs}", cancellationToken, new JsonObject
+                    {
+                        ["url"] = url,
+                        ["referer"] = referer,
+                        ["cachePath"] = cachePath,
+                        ["pvIndex"] = pvIndex,
+                        ["pvTotal"] = pvTotal,
+                        ["loadTimeoutMs"] = loadTimeoutMs
+                    });
+
                     var navigationTask = browser.WaitForNavigationAsync(
                         TimeSpan.FromMilliseconds(loadTimeoutMs),
                         cancellationToken);
@@ -209,6 +261,16 @@ namespace CefClient
                     catch (TimeoutException)
                     {
                         loadTimedOut = true;
+                        await PublishLogAsync($"PV {pvIndex}/{pvTotal} navigation timeout after {loadTimeoutMs}ms. url={url}", cancellationToken, new JsonObject
+                        {
+                            ["url"] = url,
+                            ["referer"] = referer,
+                            ["cachePath"] = cachePath,
+                            ["pvIndex"] = pvIndex,
+                            ["pvTotal"] = pvTotal,
+                            ["loadTimedOut"] = true,
+                            ["loadTimeoutMs"] = loadTimeoutMs
+                        });
                         TryStopBrowser(browser);
                     }
 
@@ -235,6 +297,8 @@ namespace CefClient
 
                     if (loadFailed)
                     {
+                        await PublishLogAsync($"PV {pvIndex}/{pvTotal} load failed. error={loadResponse?.ErrorCode}, httpStatus={loadResponse?.HttpStatusCode}", cancellationToken, pvData);
+
                         pvData["screenshotShown"] = false;
                         pvData["osrOneShot"] = true;
                         pvData["disposedByRunAsync"] = true;
@@ -250,6 +314,7 @@ namespace CefClient
                         };
                     }
 
+                    await PublishLogAsync($"PV {pvIndex}/{pvTotal} completed. loadCompleted={loadCompleted}, timedOut={loadTimedOut}, httpStatus={loadResponse?.HttpStatusCode ?? -1}", cancellationToken, pvData);
                     await PublishStatusAsync("pv", true, loadCompleted ? $"pv {pvIndex}/{pvTotal} opened" : $"pv {pvIndex}/{pvTotal} 页面加载较慢，已按超时继续", cancellationToken, pvData);
 
                     if (pvIndex < pvTotal && pvIntervalMs > 0)
@@ -278,6 +343,11 @@ namespace CefClient
                 await Task.Delay(TimeSpan.FromMilliseconds(finalScreenshotDelayMs), cancellationToken);
 
                 var screenshotShown = await TryCaptureAndShowScreenshotAsync(browser, screenshotTimeoutMs, cancellationToken);
+                await PublishLogAsync($"Final screenshot captured={screenshotShown}, title={title}", cancellationToken, new JsonObject
+                {
+                    ["title"] = title ?? string.Empty,
+                    ["screenshotShown"] = screenshotShown
+                });
 
                 var successData = new JsonObject
                 {
@@ -298,6 +368,7 @@ namespace CefClient
                     ["disposedByRunAsync"] = true
                 };
 
+                await PublishLogAsync($"RunAsync success. completedPv={completedPv}/{pvTotal}, finalLoadCompleted={finalLoadCompleted}", cancellationToken, successData);
                 // 当前 RunAsync 暂未执行点击动作；后续如果在这里补充点击流程，点击完成后调用 PublishStatusAsync("click", ...)。
                 await PublishStatusAsync("success", true, "执行成功", cancellationToken, successData);
 
@@ -311,6 +382,15 @@ namespace CefClient
             }
             catch (OperationCanceledException)
             {
+                await PublishLogAsync("RunAsync canceled", CancellationToken.None, new JsonObject
+                {
+                    ["url"] = url ?? string.Empty,
+                    ["referer"] = referer,
+                    ["taskId"] = taskId,
+                    ["consumerId"] = consumerId,
+                    ["uvIndex"] = uvIndex
+                });
+
                 await PublishStatusAsync("error", false, "取消", CancellationToken.None, new JsonObject
                 {
                     ["url"] = url ?? string.Empty,
@@ -329,6 +409,15 @@ namespace CefClient
             }
             catch (Exception ex)
             {
+                await PublishLogAsync($"RunAsync exception: {ex.Message}", CancellationToken.None, new JsonObject
+                {
+                    ["url"] = url ?? string.Empty,
+                    ["referer"] = referer,
+                    ["taskId"] = taskId,
+                    ["consumerId"] = consumerId,
+                    ["uvIndex"] = uvIndex
+                });
+
                 await PublishStatusAsync("error", false, ex.Message, CancellationToken.None, new JsonObject
                 {
                     ["url"] = url ?? string.Empty,
@@ -420,6 +509,14 @@ namespace CefClient
             }
 
             frame.LoadRequest(request);
+        }
+
+        private Task PublishLogAsync(
+            string message,
+            CancellationToken cancellationToken,
+            JsonNode? data = null)
+        {
+            return PublishStatusAsync("log", true, message, cancellationToken, data);
         }
 
         private async Task PublishStatusAsync(

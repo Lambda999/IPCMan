@@ -91,6 +91,18 @@ namespace CefClient
 
             try
             {
+                await PublishLogAsync(statusChanged, $"RunAsync start. taskId={taskId}, consumerId={consumerId}, uvIndex={uvIndex}, url={url}, pvTotal={pvTotal}", cancellationToken, BuildRunData(
+                    url,
+                    referer,
+                    sleepDelayMs,
+                    taskId: taskId,
+                    consumerId: consumerId,
+                    uvIndex: uvIndex,
+                    loadTimeoutMs: loadTimeoutMs,
+                    pvTotal: pvTotal,
+                    completedPv: completedPv,
+                    pvIntervalMs: pvIntervalMs));
+
                 await PublishStatusAsync(statusChanged, "start", true, "browser started", cancellationToken, BuildRunData(
                     url,
                     referer,
@@ -105,6 +117,8 @@ namespace CefClient
 
                 if (string.IsNullOrWhiteSpace(url))
                 {
+                    await PublishLogAsync(statusChanged, "url 不能为空", cancellationToken, BuildRunData(url, referer, sleepDelayMs, taskId: taskId, consumerId: consumerId, uvIndex: uvIndex, loadTimeoutMs: loadTimeoutMs, pvTotal: pvTotal, completedPv: completedPv, pvIntervalMs: pvIntervalMs));
+
                     result = new BrowserRunResult
                     {
                         BrowserId = BrowserId,
@@ -125,6 +139,19 @@ namespace CefClient
 
                 for (var pvIndex = 1; pvIndex <= pvTotal; pvIndex++)
                 {
+                    await PublishLogAsync(statusChanged, $"PV {pvIndex}/{pvTotal} loading. url={url}, referer={referer}, timeoutMs={loadTimeoutMs}", cancellationToken, BuildRunData(
+                        url,
+                        referer,
+                        sleepDelayMs,
+                        taskId: taskId,
+                        consumerId: consumerId,
+                        uvIndex: uvIndex,
+                        loadTimeoutMs: loadTimeoutMs,
+                        pvIndex: pvIndex,
+                        pvTotal: pvTotal,
+                        completedPv: completedPv,
+                        pvIntervalMs: pvIntervalMs));
+
                     var navigationTask = Browser.WaitForNavigationAsync(
                         TimeSpan.FromMilliseconds(loadTimeoutMs),
                         cancellationToken);
@@ -147,6 +174,19 @@ namespace CefClient
                     catch (TimeoutException)
                     {
                         loadTimedOut = true;
+                        await PublishLogAsync(statusChanged, $"PV {pvIndex}/{pvTotal} navigation timeout after {loadTimeoutMs}ms. url={url}", cancellationToken, BuildRunData(
+                            url,
+                            referer,
+                            sleepDelayMs,
+                            taskId: taskId,
+                            consumerId: consumerId,
+                            uvIndex: uvIndex,
+                            loadTimedOut: true,
+                            loadTimeoutMs: loadTimeoutMs,
+                            pvIndex: pvIndex,
+                            pvTotal: pvTotal,
+                            completedPv: completedPv,
+                            pvIntervalMs: pvIntervalMs));
                         TryStopBrowser(Browser);
                     }
 
@@ -179,6 +219,7 @@ namespace CefClient
 
                     if (loadFailed)
                     {
+                        await PublishLogAsync(statusChanged, $"PV {pvIndex}/{pvTotal} load failed. error={loadResponse?.ErrorCode}, httpStatus={loadResponse?.HttpStatusCode}", cancellationToken, pvData);
 
                         result = new BrowserRunResult
                         {
@@ -195,6 +236,7 @@ namespace CefClient
                         return result;
                     }
 
+                    await PublishLogAsync(statusChanged, $"PV {pvIndex}/{pvTotal} completed. loadCompleted={loadCompleted}, timedOut={loadTimedOut}, httpStatus={loadResponse?.HttpStatusCode ?? -1}", cancellationToken, pvData);
                     await PublishStatusAsync(statusChanged, "pv", true, loadCompleted ? $"pv {pvIndex}/{pvTotal} opened" : $"pv {pvIndex}/{pvTotal} 页面加载较慢，已按超时继续", cancellationToken, pvData);
                     await Task.Delay(TimeSpan.FromSeconds(90));
                     if (pvIndex < pvTotal && pvIntervalMs > 0)
@@ -239,6 +281,7 @@ namespace CefClient
                     completedPv: completedPv,
                     pvIntervalMs: pvIntervalMs);
 
+                await PublishLogAsync(statusChanged, $"RunAsync success. title={title}, completedPv={completedPv}/{pvTotal}, finalLoadCompleted={finalLoadCompleted}", cancellationToken, successData);
                 await PublishStatusAsync(statusChanged, "success", true, "执行成功", cancellationToken, successData);
 
                 result = new BrowserRunResult
@@ -261,6 +304,7 @@ namespace CefClient
                     Data = BuildRunData(url, referer, sleepDelayMs, taskId: taskId, consumerId: consumerId, uvIndex: uvIndex, loadTimeoutMs: loadTimeoutMs, pvTotal: pvTotal, completedPv: completedPv, pvIntervalMs: pvIntervalMs)
                 };
 
+                await PublishLogAsync(statusChanged, "RunAsync canceled", CancellationToken.None, result.Data);
                 await PublishStatusAsync(statusChanged, "error", false, "取消", CancellationToken.None, result.Data);
                 return result;
             }
@@ -274,6 +318,7 @@ namespace CefClient
                     Data = BuildRunData(url, referer, sleepDelayMs, taskId: taskId, consumerId: consumerId, uvIndex: uvIndex, loadTimeoutMs: loadTimeoutMs, pvTotal: pvTotal, completedPv: completedPv, pvIntervalMs: pvIntervalMs)
                 };
 
+                await PublishLogAsync(statusChanged, $"RunAsync exception: {ex.Message}", CancellationToken.None, result.Data);
                 await PublishStatusAsync(statusChanged, "error", false, ex.Message, CancellationToken.None, result.Data);
                 return result;
             }
@@ -412,6 +457,15 @@ namespace CefClient
             }
 
             frame.LoadRequest(request);
+        }
+
+        private Task PublishLogAsync(
+            Func<BrowserRunStatus, CancellationToken, Task>? statusChanged,
+            string message,
+            CancellationToken cancellationToken,
+            JsonNode? data = null)
+        {
+            return PublishStatusAsync(statusChanged, "log", true, message, cancellationToken, data);
         }
 
         private async Task PublishStatusAsync(

@@ -1,4 +1,4 @@
-using MainClient.Common;
+﻿using MainClient.Common;
 using MainClient.Infrastructure;
 using MainClient.Ipc;
 using MainClient.Logging;
@@ -620,6 +620,16 @@ namespace MainClient
 
                 var stage = status.Data?["stage"]?.GetValue<string>() ?? "unknown";
                 var browserId = status.BrowserId ?? string.Empty;
+                if (string.Equals(stage, "log", StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogInformation(
+                        "CefClient[{TaskId}][{BrowserId}] {Message}",
+                        ctx.TaskId,
+                        browserId,
+                        status.Message);
+                    return Task.CompletedTask;
+                }
+
                 _logger.LogInformation(
                     "CefClient browser status. taskId={TaskId}, browserId={BrowserId}, stage={Stage}, success={Success}, msg={Message}",
                     ctx.TaskId,
