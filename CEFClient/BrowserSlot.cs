@@ -2,6 +2,7 @@
 
 namespace CefClient
 {
+    using CefClient.Common;
     using CefSharp;
     using CefSharp.WinForms;
     using Microsoft.VisualBasic;
@@ -14,6 +15,7 @@ namespace CefClient
     public sealed class BrowserSlot : IAsyncDisposable
     {
         private const int BrowserInitializationTimeoutMs = 10000;
+        private const int DefaultInitialLoadTimeoutMs = 5000;
 
         public string BrowserId { get; }
         public Panel HostPanel { get; }
@@ -66,6 +68,22 @@ namespace CefClient
             }
 
             return false;
+        }
+
+        public async Task<bool> WaitForInitialLoadAsync(
+            int timeoutMs = DefaultInitialLoadTimeoutMs,
+            CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                var initialLoadTask = await UiInvokeAsync(() => Browser.WaitForInitialLoadAsync(), cancellationToken);
+                await initialLoadTask.WaitAsync(TimeSpan.FromMilliseconds(timeoutMs), cancellationToken);
+                return true;
+            }
+            catch (TimeoutException)
+            {
+                return false;
+            }
         }
 
         private async Task<string> GetPageTitleAsync(ChromiumWebBrowser browser, int timeoutMs = 3000)
@@ -193,6 +211,9 @@ namespace CefClient
                     return result;
                 }
 
+                var proxyInfo = await ConfigureProxyAsync(payload, PublishLogAsync, cancellationToken);
+                var deviceInfo = await ConfigureMobileEmulationAsync(payload, PublishLogAsync, cancellationToken);
+
                 WaitForNavigationAsyncResponse? lastLoadResponse = null;
                 var lastLoadTimedOut = false;
                 var finalLoadCompleted = false;
@@ -267,7 +288,17 @@ namespace CefClient
                         failedUrl: GetLastMainFrameFailedUrl(),
                         loadErrorText: GetLastMainFrameLoadErrorText(),
                         currentAddress: GetCurrentAddress(),
-                        ignoredRefererReason: ignoredRefererReason);
+                        ignoredRefererReason: ignoredRefererReason,
+                        proxyServer: proxyInfo.ProxyServer,
+                        proxyApplied: proxyInfo.Applied,
+                        proxyError: proxyInfo.Error,
+                        deviceWidth: deviceInfo.Width,
+                        deviceHeight: deviceInfo.Height,
+                        cssWidth: deviceInfo.CssWidth,
+                        cssHeight: deviceInfo.CssHeight,
+                        deviceScaleFactor: deviceInfo.DeviceScaleFactor,
+                        platform: deviceInfo.Platform,
+                        userAgent: deviceInfo.UserAgent);
 
 
 
@@ -313,7 +344,17 @@ namespace CefClient
                     loadTimeoutMs: loadTimeoutMs,
                     pvTotal: pvTotal,
                     completedPv: completedPv,
-                    pvIntervalMs: pvIntervalMs);
+                    pvIntervalMs: pvIntervalMs,
+                    proxyServer: proxyInfo.ProxyServer,
+                    proxyApplied: proxyInfo.Applied,
+                    proxyError: proxyInfo.Error,
+                    deviceWidth: deviceInfo.Width,
+                    deviceHeight: deviceInfo.Height,
+                    cssWidth: deviceInfo.CssWidth,
+                    cssHeight: deviceInfo.CssHeight,
+                    deviceScaleFactor: deviceInfo.DeviceScaleFactor,
+                    platform: deviceInfo.Platform,
+                    userAgent: deviceInfo.UserAgent);
 
                 await PublishStatusAsync(statusChanged, "dsp", true, finalLoadCompleted ? "page opened" : "页面加载较慢，已按超时继续", cancellationToken, dspData);
 
@@ -333,7 +374,17 @@ namespace CefClient
                     loadTimeoutMs,
                     pvTotal: pvTotal,
                     completedPv: completedPv,
-                    pvIntervalMs: pvIntervalMs);
+                    pvIntervalMs: pvIntervalMs,
+                    proxyServer: proxyInfo.ProxyServer,
+                    proxyApplied: proxyInfo.Applied,
+                    proxyError: proxyInfo.Error,
+                    deviceWidth: deviceInfo.Width,
+                    deviceHeight: deviceInfo.Height,
+                    cssWidth: deviceInfo.CssWidth,
+                    cssHeight: deviceInfo.CssHeight,
+                    deviceScaleFactor: deviceInfo.DeviceScaleFactor,
+                    platform: deviceInfo.Platform,
+                    userAgent: deviceInfo.UserAgent);
 
                 await PublishStatusAsync(statusChanged, "success", true, "执行成功", cancellationToken, successData);
 
@@ -414,7 +465,17 @@ namespace CefClient
             string? failedUrl = null,
             string? loadErrorText = null,
             string? currentAddress = null,
-            string? ignoredRefererReason = null)
+            string? ignoredRefererReason = null,
+            string? proxyServer = null,
+            bool? proxyApplied = null,
+            string? proxyError = null,
+            int? deviceWidth = null,
+            int? deviceHeight = null,
+            int? cssWidth = null,
+            int? cssHeight = null,
+            float? deviceScaleFactor = null,
+            string? platform = null,
+            string? userAgent = null)
         {
             var data = new JsonObject
             {
@@ -458,8 +519,109 @@ namespace CefClient
                 data["currentAddress"] = currentAddress;
             if (!string.IsNullOrWhiteSpace(ignoredRefererReason))
                 data["ignoredRefererReason"] = ignoredRefererReason;
+            if (!string.IsNullOrWhiteSpace(proxyServer))
+                data["proxyServer"] = proxyServer;
+            if (proxyApplied.HasValue)
+                data["proxyApplied"] = proxyApplied.Value;
+            if (!string.IsNullOrWhiteSpace(proxyError))
+                data["proxyError"] = proxyError;
+            if (deviceWidth.HasValue)
+                data["deviceWidth"] = deviceWidth.Value;
+            if (deviceHeight.HasValue)
+                data["deviceHeight"] = deviceHeight.Value;
+            if (cssWidth.HasValue)
+                data["cssWidth"] = cssWidth.Value;
+            if (cssHeight.HasValue)
+                data["cssHeight"] = cssHeight.Value;
+            if (deviceScaleFactor.HasValue)
+                data["deviceScaleFactor"] = (double)deviceScaleFactor.Value;
+            if (!string.IsNullOrWhiteSpace(platform))
+                data["platform"] = platform;
+            if (!string.IsNullOrWhiteSpace(userAgent))
+                data["userAgent"] = userAgent;
 
             return data;
+        }
+
+        private async Task<ProxyConfigurationInfo> ConfigureProxyAsync(
+            JsonNode? payload,
+            Func<string, Task> publishLogAsync,
+            CancellationToken cancellationToken)
+        {
+            var proxyServer = GetString(payload, "proxy_server");
+            if (string.IsNullOrWhiteSpace(proxyServer))
+                proxyServer = GetString(payload, "proxyServer");
+
+            var isProxyMode = GetBool(payload, "isProxyMode", false) || !string.IsNullOrWhiteSpace(proxyServer);
+            if (!isProxyMode || string.IsNullOrWhiteSpace(proxyServer))
+                return new ProxyConfigurationInfo(proxyServer, false, string.Empty);
+
+            bool success = false;
+            string error = string.Empty;
+            await Cef.UIThreadTaskFactory.StartNew(() =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var preferences = new Dictionary<string, object>
+                {
+                    ["mode"] = "fixed_servers",
+                    ["server"] = proxyServer
+                };
+
+                success = RequestContext.SetPreference("proxy", preferences, out error);
+            });
+
+            await publishLogAsync($"Set proxy server={proxyServer}, success={success}, error={error}");
+            return new ProxyConfigurationInfo(proxyServer, success, error);
+        }
+
+        private async Task<DeviceConfigurationInfo> ConfigureMobileEmulationAsync(
+            JsonNode? payload,
+            Func<string, Task> publishLogAsync,
+            CancellationToken cancellationToken)
+        {
+            var os = GetNullableInt(payload, "os") ?? 0;
+            var device = payload?["device"];
+            var sw = GetNullableInt(device, "sw") ?? 1080;
+            var sh = GetNullableInt(device, "sh") ?? 1920;
+            var ua = GetString(device, "ua");
+            if (string.IsNullOrWhiteSpace(ua))
+                ua = GetString(payload, "userAgent");
+
+            var platform = os == 1 ? "Android" : "iPhone";
+            var devProfile = AndroidViewportMatcher.Match(sw, sh);
+
+            await UiInvokeAsync(() =>
+            {
+                HostPanel.Width = devProfile.CssWidth;
+                HostPanel.Height = devProfile.CssHeight;
+            }, cancellationToken);
+
+            using var devToolsClient = await UiInvokeAsync(() => Browser.GetDevToolsClient(), cancellationToken);
+
+            if (GetBool(payload, "clearStorage", false))
+            {
+                await devToolsClient.Storage.ClearDataForOriginAsync("*", "cache_storage,cookies,local_storage");
+            }
+
+            if (!string.IsNullOrWhiteSpace(ua))
+            {
+                await devToolsClient.Emulation.SetUserAgentOverrideAsync(userAgent: ua, platform: platform);
+            }
+
+            await devToolsClient.Emulation.SetDeviceMetricsOverrideAsync(
+                width: devProfile.CssWidth,
+                height: devProfile.CssHeight,
+                deviceScaleFactor: devProfile.DeviceScaleFactor,
+                mobile: true,
+                scale: 1.0,
+                screenWidth: devProfile.CssWidth,
+                screenHeight: devProfile.CssHeight);
+            await devToolsClient.Emulation.SetTouchEmulationEnabledAsync(true, Random.Shared.Next(4, 6));
+            await devToolsClient.Emulation.SetScrollbarsHiddenAsync(true);
+
+            await publishLogAsync($"Mobile emulation configured. device={sw}x{sh}, css={devProfile.CssWidth}x{devProfile.CssHeight}, dpr={devProfile.DeviceScaleFactor}, platform={platform}, ua={ua}");
+            return new DeviceConfigurationInfo(sw, sh, devProfile.CssWidth, devProfile.CssHeight, devProfile.DeviceScaleFactor, platform, ua);
         }
 
         private void Browser_AddressChanged(object? sender, AddressChangedEventArgs e)
@@ -824,6 +986,18 @@ namespace CefClient
             }
         }
 
+        private static bool GetBool(JsonNode? payload, string name, bool defaultValue)
+        {
+            try
+            {
+                return payload?[name]?.GetValue<bool>() ?? defaultValue;
+            }
+            catch
+            {
+                return defaultValue;
+            }
+        }
+
         private static int GetPositiveInt(JsonNode? payload, string name, int defaultValue)
         {
             var value = GetNullableInt(payload, name);
@@ -923,6 +1097,17 @@ namespace CefClient
             await Task.CompletedTask;
         }
     }
+
+    public sealed record ProxyConfigurationInfo(string ProxyServer, bool Applied, string Error);
+
+    public sealed record DeviceConfigurationInfo(
+        int Width,
+        int Height,
+        int CssWidth,
+        int CssHeight,
+        float DeviceScaleFactor,
+        string Platform,
+        string UserAgent);
 
     public sealed class BrowserRunStatus
     {

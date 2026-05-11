@@ -42,7 +42,7 @@ namespace CefClient
         public async Task<bool> CreateBrowserAsync(string? taskId, string browserId, CancellationToken cancellationToken = default)
         {
             if (_slots.TryGetValue(browserId, out var existingSlot))
-                return await existingSlot.WaitForInitializedAsync(cancellationToken: cancellationToken);
+                return await existingSlot.WaitForInitialLoadAsync(cancellationToken: cancellationToken);
 
             var slot = await UiInvokeAsync(() =>
             {
@@ -91,10 +91,10 @@ namespace CefClient
                 if (!_slots.TryGetValue(browserId, out var addedByOtherThread))
                     return false;
 
-                return await addedByOtherThread.WaitForInitializedAsync(cancellationToken: cancellationToken);
+                return await addedByOtherThread.WaitForInitialLoadAsync(cancellationToken: cancellationToken);
             }
 
-            if (await slot.WaitForInitializedAsync(cancellationToken: cancellationToken))
+            if (await slot.WaitForInitialLoadAsync(cancellationToken: cancellationToken))
                 return true;
 
             if (_slots.TryRemove(browserId, out var failedSlot))
