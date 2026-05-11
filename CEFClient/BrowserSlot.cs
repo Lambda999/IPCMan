@@ -14,7 +14,6 @@ namespace CefClient
 
     public sealed class BrowserSlot : IAsyncDisposable
     {
-        private const int BrowserInitializationTimeoutMs = 10000;
         private const int DefaultInitialLoadTimeoutMs = 5000;
 
         public string BrowserId { get; }
@@ -55,33 +54,14 @@ namespace CefClient
             Browser.FrameLoadStart += Browser_FrameLoadStart;
             Browser.LoadError += Browser_LoadError;
         }
-        public async Task<bool> WaitForInitializedAsync(
-            int timeoutMs = BrowserInitializationTimeoutMs,
-            CancellationToken cancellationToken = default)
-        {
-            var sw = Stopwatch.StartNew();
-
-            while (sw.ElapsedMilliseconds < timeoutMs)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                if (await UiInvokeAsync(() => !Browser.IsDisposed && Browser.IsBrowserInitialized, cancellationToken))
-                    return true;
-
-                await Task.Delay(50, cancellationToken);
-            }
-
-            return false;
-        }
-
         public async Task<bool> WaitForInitialLoadAsync(
             int timeoutMs = DefaultInitialLoadTimeoutMs,
             CancellationToken cancellationToken = default)
         {
             try
             {
-                var initialLoadTask = await UiInvokeAsync(() => Browser.WaitForInitialLoadAsync(), cancellationToken);
-                await initialLoadTask.WaitAsync(TimeSpan.FromMilliseconds(timeoutMs), cancellationToken);
+                await Browser.WaitForInitialLoadAsync()
+                    .WaitAsync(TimeSpan.FromMilliseconds(timeoutMs), cancellationToken);
                 return true;
             }
             catch (TimeoutException)
@@ -201,13 +181,18 @@ namespace CefClient
                     return result;
                 }
 
-                if (!await WaitForInitializedAsync(cancellationToken: cancellationToken))
+                try
+                {
+                    await Browser.WaitForInitialLoadAsync()
+                        .WaitAsync(TimeSpan.FromMilliseconds(DefaultInitialLoadTimeoutMs), cancellationToken);
+                }
+                catch (TimeoutException)
                 {
                     result = new BrowserRunResult
                     {
                         BrowserId = BrowserId,
                         Success = false,
-                        Message = "浏览器初始化超时",
+                        Message = "浏览器初始加载超时",
                         Data = BuildRunData(url, referer, sleepDelayMs, taskId: taskId, consumerId: consumerId, uvIndex: uvIndex, loadTimeoutMs: loadTimeoutMs, pvTotal: pvTotal, completedPv: completedPv, pvIntervalMs: pvIntervalMs)
                     };
 
