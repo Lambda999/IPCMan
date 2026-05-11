@@ -8,11 +8,11 @@ namespace CefClient.Common
 
         public static string GetConsumerRootCachePath(string consumerId)
         {
-            return Path.Combine(RootCachePath, "Consumers", SafeSegment(consumerId));
+            return Path.Combine(RootCachePath, "Consumers", consumerId);
         }
-        public static string GetTaskSlotCachePath(string taskId,string browserId)
+        public static string GetBrowserCachePath(string browserId)
         {
-            return Path.Combine(RootCachePath, taskId, browserId);
+            return Path.Combine(RootCachePath, browserId);
         }
 
         private static string SafeSegment(string value)

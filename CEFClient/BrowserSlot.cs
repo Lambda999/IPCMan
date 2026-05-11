@@ -21,6 +21,8 @@ namespace CefClient
         public Panel HostPanel { get; }
         public ChromiumWebBrowser Browser { get; }
         public IRequestContext RequestContext { get; }
+        public DeviceProfileResult DevProfile { get; }
+
         public string CachePath { get; }
         private readonly Control _parent;
         private readonly object _navigationStateLock = new();
@@ -38,6 +40,7 @@ namespace CefClient
             ChromiumWebBrowser browser,
             IRequestContext requestContext,
             string cachePath,
+            DeviceProfileResult devProfile,
             Control parent)
         {
             BrowserId = browserId;
@@ -45,6 +48,7 @@ namespace CefClient
             Browser = browser;
             RequestContext = requestContext;
             CachePath = cachePath;
+            DevProfile = devProfile;
             _parent = parent;
 
             Browser.AddressChanged += Browser_AddressChanged;
@@ -182,37 +186,11 @@ namespace CefClient
                     return result;
                 }
 
-                var urlValidationError = ValidateHttpNavigationUrl(url, "url");
-                if (!string.IsNullOrWhiteSpace(urlValidationError))
-                {
-                    result = new BrowserRunResult
-                    {
-                        BrowserId = BrowserId,
-                        Success = false,
-                        Message = urlValidationError,
-                        Data = BuildRunData(url, referer, sleepDelayMs, taskId: taskId, consumerId: consumerId, uvIndex: uvIndex, loadTimeoutMs: loadTimeoutMs, pvTotal: pvTotal, completedPv: completedPv, pvIntervalMs: pvIntervalMs)
-                    };
-
-                    await PublishStatusAsync(statusChanged, "error", false, result.Message, cancellationToken, result.Data);
-                    return result;
-                }
-
-                if (!await WaitForInitializedAsync(cancellationToken: cancellationToken))
-                {
-                    result = new BrowserRunResult
-                    {
-                        BrowserId = BrowserId,
-                        Success = false,
-                        Message = "浏览器初始化超时",
-                        Data = BuildRunData(url, referer, sleepDelayMs, taskId: taskId, consumerId: consumerId, uvIndex: uvIndex, loadTimeoutMs: loadTimeoutMs, pvTotal: pvTotal, completedPv: completedPv, pvIntervalMs: pvIntervalMs)
-                    };
-
-                    await PublishStatusAsync(statusChanged, "error", false, result.Message, cancellationToken, result.Data);
-                    return result;
-                }
+                await Browser.WaitForInitialLoadAsync()
+                    .WaitAsync(TimeSpan.FromMilliseconds(DefaultInitialLoadTimeoutMs), cancellationToken);
 
                 var proxyInfo = await ConfigureProxyAsync(payload, PublishLogAsync, cancellationToken);
-                var deviceInfo = await ConfigureMobileEmulationAsync(payload, PublishLogAsync, cancellationToken);
+                var deviceInfo = await ConfigureMobileEmulationAsync(payload, DevProfile, PublishLogAsync, cancellationToken);
 
                 WaitForNavigationAsyncResponse? lastLoadResponse = null;
                 var lastLoadTimedOut = false;
@@ -577,6 +555,7 @@ namespace CefClient
 
         private async Task<DeviceConfigurationInfo> ConfigureMobileEmulationAsync(
             JsonNode? payload,
+            DeviceProfileResult devProfile,
             Func<string, Task> publishLogAsync,
             CancellationToken cancellationToken)
         {
@@ -589,7 +568,7 @@ namespace CefClient
                 ua = GetString(payload, "userAgent");
 
             var platform = os == 1 ? "Android" : "iPhone";
-            var devProfile = AndroidViewportMatcher.Match(sw, sh);
+
 
             await UiInvokeAsync(() =>
             {

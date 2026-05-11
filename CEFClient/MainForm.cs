@@ -27,7 +27,7 @@ namespace CefClient
                 Dock = DockStyle.Fill,
                 AutoScroll = true,
                 WrapContents = true,
-                FlowDirection = FlowDirection.LeftToRight
+                FlowDirection = FlowDirection.LeftToRight,
             };
 
             Controls.Add(_hostPanel);
@@ -39,50 +39,56 @@ namespace CefClient
         }
 
 
-        public async Task<bool> CreateBrowserAsync(string? taskId, string browserId, CancellationToken cancellationToken = default)
+        public async Task<bool> CreateBrowserAsync(
+            string taskId,
+            string browserId,
+            System.Text.Json.Nodes.JsonNode? payload,
+            CancellationToken cancellationToken = default)
         {
-            if (_slots.TryGetValue(browserId, out var existingSlot))
-                return await existingSlot.WaitForInitialLoadAsync(cancellationToken: cancellationToken);
+
+
+            var device = payload?["device"];
+            var sw = device?["sw"]?.GetValue<int>() ?? 1080;
+            var sh = device?["sh"]?.GetValue<int>() ?? 1920;
+            var devProfile = AndroidViewportMatcher.Match(sw, sh);
+
+            var cachePath = CefCachePaths.GetBrowserCachePath(browserId);
+
+            var requestContext = new RequestContext(new RequestContextSettings
+            {
+                CachePath = cachePath,
+                PersistUserPreferences = false,
+                PersistSessionCookies = false,
+            });
 
             var slot = await UiInvokeAsync(() =>
             {
-                Directory.CreateDirectory(CefCachePaths.RootCachePath);
-
-                var cachePath = CefCachePaths.GetTaskSlotCachePath(taskId, browserId);
-                Directory.CreateDirectory(cachePath);
-
-                var requestContext = new RequestContext(new RequestContextSettings
-                {
-                    CachePath = cachePath,
-                    // PersistUserPreferences = true,
-                    PersistSessionCookies = false,
-                });
-
                 var panel = new Panel
                 {
-                    Width = 420,
-                    Height = 920,
+                    Width = 360,
+                    Height = 720,
                     Margin = new Padding(5),
                     BorderStyle = BorderStyle.FixedSingle
+                };
+
+                var title = new Label
+                {
+                    AutoEllipsis = true,
+                    Dock = DockStyle.Top,
+                    Height = 28,
+                    Text = $"CefClient {browserId}",
+                    TextAlign = ContentAlignment.MiddleCenter
                 };
 
                 var browser = new ChromiumWebBrowser("about:blank", requestContext)
                 {
                     Dock = DockStyle.Fill
                 };
-
-                //browser.FrameLoadStart += (a, b) =>
-                //{
-                //    if (b.Frame.IsMain)
-                //    {
-                //        browser.ShowDevTools();
-                //    }
-                //};
-
                 panel.Controls.Add(browser);
+                panel.Controls.Add(title);
                 _hostPanel.Controls.Add(panel);
 
-                return new BrowserSlot(browserId, panel, browser, requestContext, cachePath, _hostPanel);
+                return new BrowserSlot(browserId, panel, browser, requestContext, cachePath, devProfile, _hostPanel);
             }, cancellationToken);
 
             if (!_slots.TryAdd(browserId, slot))
@@ -91,10 +97,10 @@ namespace CefClient
                 if (!_slots.TryGetValue(browserId, out var addedByOtherThread))
                     return false;
 
-                return await addedByOtherThread.WaitForInitialLoadAsync(cancellationToken: cancellationToken);
+                return await addedByOtherThread.WaitForInitializedAsync(cancellationToken: cancellationToken);
             }
 
-            if (await slot.WaitForInitialLoadAsync(cancellationToken: cancellationToken))
+            if (await slot.WaitForInitializedAsync(cancellationToken: cancellationToken))
                 return true;
 
             if (_slots.TryRemove(browserId, out var failedSlot))
