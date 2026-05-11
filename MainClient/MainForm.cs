@@ -901,11 +901,11 @@ namespace MainClient
 
                         try
                         {
+                            var uvPayload = BuildRunBrowserPayload(ctx, rawTask, dev, consumerId, uvIndex);
                             // 多 UV 只按配置间隔投递到 CefClient，不等待子进程完成 browserCreated。
                             // CefClient 的管道读取是顺序的，同一个 browserId 会先执行 createBrowser 再执行 runBrowser。
-                            await session.CreateBrowserNoWaitAsync(ctx.UniqueId, browserId, innerToken);
+                            await session.CreateBrowserNoWaitAsync(ctx.UniqueId, browserId, uvPayload, innerToken);
 
-                            var uvPayload = BuildRunBrowserPayload(ctx, rawTask, dev, consumerId, uvIndex);
                             await session.RunBrowserNoWaitAsync(
                                 ctx.UniqueId,
                                 browserId,
@@ -1498,7 +1498,7 @@ namespace MainClient
 
             return args;
         }
- 
+
 
         private void InitPipelineRunner()
         {
