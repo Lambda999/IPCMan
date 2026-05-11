@@ -83,7 +83,10 @@ namespace CefClient
             var consumerId = payload?["consumerId"]?.ToString() ?? "unknown";
             var uvIndex = payload?["uvIndex"]?.ToString() ?? BrowserId;
             var loadTimeoutMs = GetPositiveInt(payload, "loadTimeoutMs", 30000);
+            var pvTotal = GetPositiveInt(task, "pv", 1);
+            var pvIntervalMs = GetNonNegativeInt(payload, "pvIntervalMs", 1000);
             BrowserRunResult? result = null;
+            var completedPv = 0;
 
             try
             {
@@ -94,7 +97,10 @@ namespace CefClient
                     taskId: taskId,
                     consumerId: consumerId,
                     uvIndex: uvIndex,
-                    loadTimeoutMs: loadTimeoutMs));
+                    loadTimeoutMs: loadTimeoutMs,
+                    pvTotal: pvTotal,
+                    completedPv: completedPv,
+                    pvIntervalMs: pvIntervalMs));
 
                 if (string.IsNullOrWhiteSpace(url))
                 {
@@ -103,69 +109,108 @@ namespace CefClient
                         BrowserId = BrowserId,
                         Success = false,
                         Message = "url 不能为空",
-                        Data = BuildRunData(url, referer, sleepDelayMs, taskId: taskId, consumerId: consumerId, uvIndex: uvIndex, loadTimeoutMs: loadTimeoutMs)
+                        Data = BuildRunData(url, referer, sleepDelayMs, taskId: taskId, consumerId: consumerId, uvIndex: uvIndex, loadTimeoutMs: loadTimeoutMs, pvTotal: pvTotal, completedPv: completedPv, pvIntervalMs: pvIntervalMs)
                     };
 
                     await PublishStatusAsync(statusChanged, "error", false, result.Message, cancellationToken, result.Data);
                     return result;
                 }
 
-                var navigationTask = Browser.WaitForNavigationAsync(
-                    TimeSpan.FromMilliseconds(loadTimeoutMs),
-                    cancellationToken);
-
+                WaitForNavigationAsyncResponse? lastLoadResponse = null;
+                var lastLoadTimedOut = false;
+                var finalLoadCompleted = false;
                 var refererHeaders = BuildRefererHeaders(referer);
-                if (refererHeaders != null)
+
+                for (var pvIndex = 1; pvIndex <= pvTotal; pvIndex++)
                 {
-                    LoadUrl(Browser, url, "GET", refererHeaders);
-                }
-                else
-                {
-                    Browser.Load(url);
+                    var navigationTask = Browser.WaitForNavigationAsync(
+                        TimeSpan.FromMilliseconds(loadTimeoutMs),
+                        cancellationToken);
+
+                    if (refererHeaders != null)
+                    {
+                        LoadUrl(Browser, url, "GET", refererHeaders);
+                    }
+                    else
+                    {
+                        Browser.Load(url);
+                    }
+
+                    WaitForNavigationAsyncResponse? loadResponse = null;
+                    var loadTimedOut = false;
+                    try
+                    {
+                        loadResponse = await navigationTask;
+                    }
+                    catch (TimeoutException)
+                    {
+                        loadTimedOut = true;
+                        TryStopBrowser(Browser);
+                    }
+
+                    var loadFailed = loadResponse != null && loadResponse.ErrorCode != CefErrorCode.None;
+                    var loadCompleted = loadResponse != null && !loadTimedOut && loadResponse.ErrorCode == CefErrorCode.None;
+                    lastLoadResponse = loadResponse;
+                    lastLoadTimedOut = loadTimedOut;
+                    finalLoadCompleted = loadCompleted;
+                    completedPv = pvIndex;
+
+                    var pvData = BuildRunData(
+                        url,
+                        referer,
+                        sleepDelayMs,
+                        taskId: taskId,
+                        consumerId: consumerId,
+                        uvIndex: uvIndex,
+                        loadCompleted: loadCompleted,
+                        loadTimedOut: loadTimedOut,
+                        loadErrorCode: loadResponse?.ErrorCode.ToString() ?? string.Empty,
+                        httpStatusCode: loadResponse?.HttpStatusCode ?? -1,
+                        loadTimeoutMs: loadTimeoutMs,
+                        pvIndex: pvIndex,
+                        pvTotal: pvTotal,
+                        completedPv: completedPv,
+                        pvIntervalMs: pvIntervalMs);
+
+                    if (loadFailed)
+                    {
+                        result = new BrowserRunResult
+                        {
+                            BrowserId = BrowserId,
+                            Success = false,
+                            Message = "页面加载失败",
+                            Data = pvData
+                        };
+
+                        await PublishStatusAsync(statusChanged, "error", false, $"第 {pvIndex}/{pvTotal} 次 PV 页面加载失败", cancellationToken, pvData);
+                        return result;
+                    }
+
+                    await PublishStatusAsync(statusChanged, "pv", true, loadCompleted ? $"pv {pvIndex}/{pvTotal} opened" : $"pv {pvIndex}/{pvTotal} 页面加载较慢，已按超时继续", cancellationToken, pvData);
+
+                    if (pvIndex < pvTotal && pvIntervalMs > 0)
+                    {
+                        await Task.Delay(TimeSpan.FromMilliseconds(pvIntervalMs), cancellationToken);
+                    }
                 }
 
-                WaitForNavigationAsyncResponse? loadResponse = null;
-                var loadTimedOut = false;
-                try
-                {
-                    loadResponse = await navigationTask;
-                }
-                catch (TimeoutException)
-                {
-                    loadTimedOut = true;
-                    TryStopBrowser(Browser);
-                }
-
-                var loadFailed = loadResponse != null && loadResponse.ErrorCode != CefErrorCode.None;
-                var loadCompleted = loadResponse != null && !loadTimedOut && loadResponse.ErrorCode == CefErrorCode.None;
-                var runData = BuildRunData(
+                var dspData = BuildRunData(
                     url,
                     referer,
                     sleepDelayMs,
                     taskId: taskId,
                     consumerId: consumerId,
                     uvIndex: uvIndex,
-                    loadCompleted: loadCompleted,
-                    loadTimedOut: loadTimedOut,
-                    loadErrorCode: loadResponse?.ErrorCode.ToString() ?? string.Empty,
-                    httpStatusCode: loadResponse?.HttpStatusCode ?? -1,
-                    loadTimeoutMs: loadTimeoutMs);
+                    loadCompleted: finalLoadCompleted,
+                    loadTimedOut: lastLoadTimedOut,
+                    loadErrorCode: lastLoadResponse?.ErrorCode.ToString() ?? string.Empty,
+                    httpStatusCode: lastLoadResponse?.HttpStatusCode ?? -1,
+                    loadTimeoutMs: loadTimeoutMs,
+                    pvTotal: pvTotal,
+                    completedPv: completedPv,
+                    pvIntervalMs: pvIntervalMs);
 
-                if (loadFailed)
-                {
-                    result = new BrowserRunResult
-                    {
-                        BrowserId = BrowserId,
-                        Success = false,
-                        Message = "页面加载失败",
-                        Data = runData
-                    };
-
-                    await PublishStatusAsync(statusChanged, "error", false, result.Message, cancellationToken, runData);
-                    return result;
-                }
-
-                await PublishStatusAsync(statusChanged, "dsp", true, loadCompleted ? "page opened" : "页面加载较慢，已按超时继续", cancellationToken, runData);
+                await PublishStatusAsync(statusChanged, "dsp", true, finalLoadCompleted ? "page opened" : "页面加载较慢，已按超时继续", cancellationToken, dspData);
 
                 var title = await GetPageTitleAsync(Browser);
                 var successData = BuildRunData(
@@ -176,11 +221,14 @@ namespace CefClient
                     taskId,
                     consumerId,
                     uvIndex,
-                    loadCompleted,
-                    loadTimedOut,
-                    loadResponse?.ErrorCode.ToString() ?? string.Empty,
-                    loadResponse?.HttpStatusCode ?? -1,
-                    loadTimeoutMs);
+                    finalLoadCompleted,
+                    lastLoadTimedOut,
+                    lastLoadResponse?.ErrorCode.ToString() ?? string.Empty,
+                    lastLoadResponse?.HttpStatusCode ?? -1,
+                    loadTimeoutMs,
+                    pvTotal: pvTotal,
+                    completedPv: completedPv,
+                    pvIntervalMs: pvIntervalMs);
 
                 await PublishStatusAsync(statusChanged, "success", true, "执行成功", cancellationToken, successData);
 
@@ -188,7 +236,7 @@ namespace CefClient
                 {
                     BrowserId = BrowserId,
                     Success = true,
-                    Message = loadCompleted ? "执行成功" : "页面加载较慢，已按超时继续",
+                    Message = finalLoadCompleted ? "执行成功" : "页面加载较慢，已按超时继续",
                     Data = successData
                 };
 
@@ -201,7 +249,7 @@ namespace CefClient
                     BrowserId = BrowserId,
                     Success = false,
                     Message = "取消",
-                    Data = BuildRunData(url, referer, sleepDelayMs, taskId: taskId, consumerId: consumerId, uvIndex: uvIndex, loadTimeoutMs: loadTimeoutMs)
+                    Data = BuildRunData(url, referer, sleepDelayMs, taskId: taskId, consumerId: consumerId, uvIndex: uvIndex, loadTimeoutMs: loadTimeoutMs, pvTotal: pvTotal, completedPv: completedPv, pvIntervalMs: pvIntervalMs)
                 };
 
                 await PublishStatusAsync(statusChanged, "error", false, "取消", CancellationToken.None, result.Data);
@@ -214,7 +262,7 @@ namespace CefClient
                     BrowserId = BrowserId,
                     Success = false,
                     Message = ex.Message,
-                    Data = BuildRunData(url, referer, sleepDelayMs, taskId: taskId, consumerId: consumerId, uvIndex: uvIndex, loadTimeoutMs: loadTimeoutMs)
+                    Data = BuildRunData(url, referer, sleepDelayMs, taskId: taskId, consumerId: consumerId, uvIndex: uvIndex, loadTimeoutMs: loadTimeoutMs, pvTotal: pvTotal, completedPv: completedPv, pvIntervalMs: pvIntervalMs)
                 };
 
                 await PublishStatusAsync(statusChanged, "error", false, ex.Message, CancellationToken.None, result.Data);
@@ -234,7 +282,10 @@ namespace CefClient
                     taskId: taskId,
                     consumerId: consumerId,
                     uvIndex: uvIndex,
-                    loadTimeoutMs: loadTimeoutMs));
+                    loadTimeoutMs: loadTimeoutMs,
+                    pvTotal: pvTotal,
+                    completedPv: completedPv,
+                    pvIntervalMs: pvIntervalMs));
             }
         }
 
@@ -250,7 +301,11 @@ namespace CefClient
             bool? loadTimedOut = null,
             string? loadErrorCode = null,
             int? httpStatusCode = null,
-            int? loadTimeoutMs = null)
+            int? loadTimeoutMs = null,
+            int? pvIndex = null,
+            int? pvTotal = null,
+            int? completedPv = null,
+            int? pvIntervalMs = null)
         {
             var data = new JsonObject
             {
@@ -278,6 +333,14 @@ namespace CefClient
                 data["httpStatusCode"] = httpStatusCode.Value;
             if (loadTimeoutMs.HasValue)
                 data["loadTimeoutMs"] = loadTimeoutMs.Value;
+            if (pvIndex.HasValue)
+                data["pvIndex"] = pvIndex.Value;
+            if (pvTotal.HasValue)
+                data["pvTotal"] = pvTotal.Value;
+            if (completedPv.HasValue)
+                data["completedPv"] = completedPv.Value;
+            if (pvIntervalMs.HasValue)
+                data["pvIntervalMs"] = pvIntervalMs.Value;
 
             return data;
         }
@@ -456,6 +519,12 @@ namespace CefClient
         {
             var value = GetNullableInt(payload, name);
             return value.HasValue && value.Value > 0 ? value.Value : defaultValue;
+        }
+
+        private static int GetNonNegativeInt(JsonNode? payload, string name, int defaultValue)
+        {
+            var value = GetNullableInt(payload, name);
+            return value.HasValue && value.Value >= 0 ? value.Value : defaultValue;
         }
 
         private static int? GetNullableInt(JsonNode? payload, string name)
