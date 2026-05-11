@@ -7,14 +7,5 @@
     <Compile Update="MainForm.cs">
       <SubType>Form</SubType>
     </Compile>
-    <Compile Update="MainFormv2.cs">
-      <SubType>Form</SubType>
-    </Compile>
-    <Compile Update="WebContainer.cs">
-      <SubType>Form</SubType>
-    </Compile>
-    <Compile Update="WebViewForm.cs">
-      <SubType>Form</SubType>
-    </Compile>
   </ItemGroup>
 </Project>
