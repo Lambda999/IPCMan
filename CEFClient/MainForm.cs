@@ -41,8 +41,8 @@ namespace CefClient
 
         public async Task<bool> CreateBrowserAsync(string? taskId, string browserId, CancellationToken cancellationToken = default)
         {
-            if (_slots.ContainsKey(browserId))
-                return true;
+            if (_slots.TryGetValue(browserId, out var existingSlot))
+                return await existingSlot.WaitForInitialLoadAsync(cancellationToken: cancellationToken);
 
             var slot = await UiInvokeAsync(() =>
             {
@@ -54,7 +54,7 @@ namespace CefClient
                 var requestContext = new RequestContext(new RequestContextSettings
                 {
                     CachePath = cachePath,
-                   // PersistUserPreferences = true,
+                    // PersistUserPreferences = true,
                     PersistSessionCookies = false,
                 });
 
@@ -85,7 +85,24 @@ namespace CefClient
                 return new BrowserSlot(browserId, panel, browser, requestContext, cachePath, _hostPanel);
             }, cancellationToken);
 
-            return _slots.TryAdd(browserId, slot);
+            if (!_slots.TryAdd(browserId, slot))
+            {
+                await slot.DisposeAsync();
+                if (!_slots.TryGetValue(browserId, out var addedByOtherThread))
+                    return false;
+
+                return await addedByOtherThread.WaitForInitialLoadAsync(cancellationToken: cancellationToken);
+            }
+
+            if (await slot.WaitForInitialLoadAsync(cancellationToken: cancellationToken))
+                return true;
+
+            if (_slots.TryRemove(browserId, out var failedSlot))
+            {
+                await failedSlot.DisposeAsync();
+            }
+
+            return false;
         }
 
 
