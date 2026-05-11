@@ -19,6 +19,7 @@ namespace CefClient
     {
         private readonly FlowLayoutPanel _hostPanel;
         private readonly ConcurrentDictionary<string, BrowserSlot> _slots = new();
+        private readonly ConcurrentDictionary<string, SemaphoreSlim> _createLocks = new();
         public MainForm()
         {
             InitializeComponent();
@@ -41,51 +42,75 @@ namespace CefClient
 
         public async Task<bool> CreateBrowserAsync(string? taskId, string browserId, CancellationToken cancellationToken = default)
         {
-            if (_slots.ContainsKey(browserId))
-                return true;
+            var createLock = _createLocks.GetOrAdd(browserId, _ => new SemaphoreSlim(1, 1));
+            await createLock.WaitAsync(cancellationToken);
 
-            var slot = await UiInvokeAsync(() =>
+            try
             {
-                Directory.CreateDirectory(CefCachePaths.RootCachePath);
+                if (_slots.TryGetValue(browserId, out var existingSlot))
+                    return await existingSlot.WaitForInitialLoadAsync(cancellationToken: cancellationToken);
 
-                var cachePath = CefCachePaths.GetTaskSlotCachePath(taskId, browserId);
-                Directory.CreateDirectory(cachePath);
-
-                var requestContext = new RequestContext(new RequestContextSettings
+                var slot = await UiInvokeAsync(() =>
                 {
-                    CachePath = cachePath,
-                   // PersistUserPreferences = true,
-                    PersistSessionCookies = false,
-                });
+                    Directory.CreateDirectory(CefCachePaths.RootCachePath);
 
-                var panel = new Panel
+                    var cachePath = CefCachePaths.GetTaskSlotCachePath(taskId, browserId);
+                    Directory.CreateDirectory(cachePath);
+
+                    var requestContext = new RequestContext(new RequestContextSettings
+                    {
+                        CachePath = cachePath,
+                        // PersistUserPreferences = true,
+                        PersistSessionCookies = false,
+                    });
+
+                    var panel = new Panel
+                    {
+                        Width = 420,
+                        Height = 920,
+                        Margin = new Padding(5),
+                        BorderStyle = BorderStyle.FixedSingle
+                    };
+
+                    var browser = new ChromiumWebBrowser("about:blank", requestContext)
+                    {
+                        Dock = DockStyle.Fill
+                    };
+
+                    //browser.FrameLoadStart += (a, b) =>
+                    //{
+                    //    if (b.Frame.IsMain)
+                    //    {
+                    //        browser.ShowDevTools();
+                    //    }
+                    //};
+
+                    panel.Controls.Add(browser);
+                    _hostPanel.Controls.Add(panel);
+
+                    return new BrowserSlot(browserId, panel, browser, requestContext, cachePath, _hostPanel);
+                }, cancellationToken);
+
+                if (!_slots.TryAdd(browserId, slot))
                 {
-                    Width = 420,
-                    Height = 920,
-                    Margin = new Padding(5),
-                    BorderStyle = BorderStyle.FixedSingle
-                };
+                    await slot.DisposeAsync();
+                    return false;
+                }
 
-                var browser = new ChromiumWebBrowser("about:blank", requestContext)
+                if (await slot.WaitForInitialLoadAsync(cancellationToken: cancellationToken))
+                    return true;
+
+                if (_slots.TryRemove(browserId, out var failedSlot))
                 {
-                    Dock = DockStyle.Fill
-                };
+                    await failedSlot.DisposeAsync();
+                }
 
-                //browser.FrameLoadStart += (a, b) =>
-                //{
-                //    if (b.Frame.IsMain)
-                //    {
-                //        browser.ShowDevTools();
-                //    }
-                //};
-
-                panel.Controls.Add(browser);
-                _hostPanel.Controls.Add(panel);
-
-                return new BrowserSlot(browserId, panel, browser, requestContext, cachePath, _hostPanel);
-            }, cancellationToken);
-
-            return _slots.TryAdd(browserId, slot);
+                return false;
+            }
+            finally
+            {
+                createLock.Release();
+            }
         }
 
 
